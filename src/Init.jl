@@ -1,0 +1,140 @@
+# File: src/Init.jl
+
+using FFTW
+
+"""
+第一阶段：不含真实 A，用于生成初始场
+"""
+function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
+    Nx, Ny   = 256, 256
+    Lx, Ly   = 1.0, 1.0
+    epsilon  = 0.01
+    gamma_bend = 0.1
+    gamma_in, gamma_out = 1e5, 1e5
+
+    psi_in = (goal == :s) ? 0.1 : 0.65
+
+    S1 = (3 * sqrt(2) / 8) * epsilon * gamma_bend
+    S2 = 0.0
+    S3 = 1.0 * gamma_bend / (epsilon^3)
+    S4 = 1.0 * min(gamma_in, gamma_out)
+
+    # 使用 keyword 构造函数，Nt/dx/dy 自动计算
+    return Config(
+        epsilon     = epsilon,
+        M_phi       = 1.0,
+        M0_psi      = 0.5,
+        eta         = 1.0,
+        gamma_surf  = 1.0,
+        gamma_area  = 5e4,
+        gamma_bend  = gamma_bend,
+        gamma_in    = gamma_in,
+        beta_in     = 0.0,
+        psi_in      = psi_in,
+        gamma_out   = gamma_out,
+        beta_out    = 0.0,
+        psi_out     = 0.8,
+        lamda      = 1.0,
+        S1 = S1, S2 = S2, S3 = S3, S4 = S4,
+        C1 = 1.0, C2 = 5.0e5, C3 = 4.0e4,
+        dt = dt, T = T,
+        Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
+        tol  = 1e-12,
+        goal = goal,
+        A    = 0.0    # 占位，后续由 set_A 更新
+    )
+end
+
+"""
+生成初始物理场
+"""
+function generate_initial_condition(conf::Config, state_type::Int)
+    Nx, Ny   = conf.Nx, conf.Ny
+    dx, dy   = conf.dx, conf.dy
+    Lx, Ly   = conf.Lx, conf.Ly
+    epsilon  = conf.epsilon
+
+    x_nodes = range(0, Lx - dx, length=Nx)
+    y_nodes = range(0, Ly - dy, length=Ny)
+    X = [x for x in x_nodes, y in y_nodes]
+    Y = [y for x in x_nodes, y in y_nodes]
+
+    phi = zeros(Nx, Ny)
+
+    if state_type == 1  # 单圆球
+        R      = 0.2 * Lx
+        cx, cy = Lx / 2, Ly / 2
+        dist   = @. sqrt((X - cx)^2 / 2 + (Y - cy)^2)
+        phi   .= @. tanh((R - dist) / (sqrt(2) * epsilon))
+
+    elseif state_type == 2  # 三角形
+        Xc, Yc    = X .- (Lx - dx) / 2, Y .- (Ly - dy) / 2
+        radius    = 0.65 * Lx
+        smoothness = 40.0
+        k_sin, k_cos = sqrt(3) / 2, 0.5
+        d1 = @. -Yc
+        d2 = @. k_sin * Xc + k_cos * Yc
+        d3 = @. -k_sin * Xc + k_cos * Yc
+        mx       = @. max(d1, max(d2, d3))
+        d_shape  = @. mx + (1 / smoothness) * log(
+                       exp(smoothness * (d1 - mx)) +
+                       exp(smoothness * (d2 - mx)) +
+                       exp(smoothness * (d3 - mx)))
+        d_final  = @. d_shape - (radius / 3)
+        phi     .= @. -tanh(d_final / (sqrt(2) * epsilon))
+    end
+
+    # 初始化 psi
+    psi = if conf.goal == :s
+        @. -0.1 * phi + 0.7
+    else
+        @. -0.35 * phi + 0.45
+    end
+
+    # FFT —— 注意 u 沿前两维变换，第3维是方向分量
+    phi_hat = fft(phi)
+    psi_hat = fft(psi)
+    u       = zeros(Nx, Ny, 2)
+    u_hat   = fft(u, (1, 2))    # 修正：规范写法
+    p       = zeros(Nx, Ny)
+    p_hat   = fft(p)
+    mu      = zeros(Nx, Ny);  mu_hat = fft(mu)
+    nu      = zeros(Nx, Ny);  nu_hat = fft(nu)
+
+    return FieldState(
+        phi, phi_hat, psi, psi_hat,
+        u, u_hat, p, p_hat,
+        mu, mu_hat, nu, nu_hat,
+        1.0, 1.0, 1.0, 1.0,    # Q, R1, R2, R3
+        0.0                      # A 占位，修正：补全缺失字段
+    )
+end
+
+"""
+第二阶段：用计算所得真实面积 A 重建 Config
+"""
+function set_A(conf::Config, A::Float64)
+    return Config(
+        epsilon    = conf.epsilon,
+        M_phi      = conf.M_phi,
+        M0_psi     = conf.M0_psi,
+        eta        = conf.eta,
+        gamma_surf = conf.gamma_surf,
+        gamma_area = conf.gamma_area,
+        gamma_bend = conf.gamma_bend,
+        gamma_in   = conf.gamma_in,
+        beta_in    = conf.beta_in,
+        psi_in     = conf.psi_in,
+        gamma_out  = conf.gamma_out,
+        beta_out   = conf.beta_out,
+        psi_out    = conf.psi_out,
+        lamda     = conf.lamda,
+        S1 = conf.S1, S2 = conf.S2, S3 = conf.S3, S4 = conf.S4,
+        C1 = conf.C1, C2 = conf.C2, C3 = conf.C3,
+        dt = conf.dt, T = conf.T,
+        Nx = conf.Nx, Ny = conf.Ny, Lx = conf.Lx, Ly = conf.Ly,
+        tol  = conf.tol,
+        goal = conf.goal,
+        A    = A    # 真实值
+    )
+end

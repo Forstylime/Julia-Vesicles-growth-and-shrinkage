@@ -1,0 +1,26 @@
+# --- Julia 相关 ---
+# 忽略编译缓存
+*.ji
+*.o
+*.a
+compiled/
+
+# --- 项目产物 ---
+# 忽略 results 文件夹及其内容
+/results/
+# 忽略可能生成的各种图表、CSV 数据或日志
+*.png
+*.jpg
+*.csv
+*.log
+
+# --- 开发环境与 IDE ---
+# 忽略 VS Code 配置
+.vscode/
+# 忽略操作系统自动生成的文件
+.DS_Store
+Thumbs.db
+
+# --- 注意 ---
+# 建议保留 Manifest.toml (记录精确版本) 和 Project.toml (记录依赖)
+# 如果 Manifest.toml 包含敏感路径（很少见），才考虑忽略
