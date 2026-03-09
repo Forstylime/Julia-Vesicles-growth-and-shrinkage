@@ -1,5 +1,5 @@
 # File: Main.jl
-## simulation function
+println("加载模块...\n")
 
 using FFTW
 using LinearAlgebra
@@ -8,39 +8,44 @@ using ProgressMeter
 using CairoMakie
 using IterativeSolvers
 
-include("src/Types.jl")
-include("src/SpectralUtils.jl")
-include("src/Utils.jl")
-include("src/Solvers.jl")
-include("src/Init.jl")
+include("../src/Types.jl")
+include("../src/SpectralUtils.jl")
+include("../src/Utils.jl")
+include("../src/Solvers.jl")
+include("../src/Init.jl")
 
+println("模块加载完成。开始仿真...")
+
+## simulation function
 function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
                         save_path::String="./results",
                         save_frames::Int=20)
 
     # ── 1. 初始化配置与算子 ──────────────────────────────────────
     conf = set_para_base(dt_val, T_val; goal=:s)
-    ops  = generate_operators(conf)
+    ops  = build_operators(conf)
     mkpath(save_path)
+    # 预分配内存
+    #present = FieldState(conf.Nx, conf.Ny, conf.N)
 
     # ── 2. 生成初始场 ────────────────────────────────────────────
-    present = generate_initial_condition(conf, state_type)
+    present = generate_initial_condition(conf, ops, state_type)
 
     # 用 f_surf 积分计算真实面积（与模型约定一致）
-    present.A = calculate_area(present.phi, present.phi_hat, ops, conf)
-    conf      = set_A(conf, present.A)
+    A0 = calculate_area(present.phi, ops, conf)
+    conf.A0 = A0
 
     # 初始化 SAV 变量
-    present.R1 = sqrt(get_W1(present.phi, present.phi_hat, ops, conf) + conf.C1)
-    present.R2 = sqrt(get_W2(present.phi, present.phi_hat, ops, conf) + conf.C2)
-    present.R3 = sqrt(get_W3(present.phi, present.psi, conf)          + conf.C3)
+    present.R1 = sqrt(get_W1(present.phi, ops, conf) + conf.C1)
+    present.R2 = sqrt(get_W2(present.phi, ops, conf) + conf.C2)
+    present.R3 = sqrt(get_W3(present.phi, present.psi, conf) + conf.C3)
     present.Q  = 1.0
 
     # 计算初始化学势
     L_phi = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
 
-    H1 = get_H1(present.phi, present.phi_hat, ops, conf)
-    H2 = get_H2(present.phi, present.phi_hat, ops, conf)
+    H1 = get_H1(present.phi, ops, conf)
+    H2 = get_H2(present.phi, ops, conf)
     H3 = get_H3(present.phi, present.psi, conf)
     G  = get_MG(present.phi, present.psi, conf)
 
@@ -51,8 +56,8 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     present.nu_hat .= conf.S4        .* present.psi_hat .+
                       present.R3     .* (ops.fft_plan * G)
 
-    present.mu .= real(ops.ifft_plan * present.mu_hat)
-    present.nu .= real(ops.ifft_plan * present.nu_hat)
+    present.mu .= ops.ifft_plan * present.mu_hat
+    present.nu .= ops.ifft_plan * present.nu_hat
 
     # BDF2 需要两个时间层，初始令 old = present
     old = deepcopy(present)
@@ -61,7 +66,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     energy_history    = Float64[]
     save_interval     = max(1, conf.Nt ÷ save_frames)
 
-    @info "仿真开始。初始 Q = $(present.Q)，初始面积 = $(present.A)"
+    @info "仿真开始。初始 Q = $(present.Q)，初始面积 = $(conf.A0)"
 
     # ── 4. 时间推进循环 ──────────────────────────────────────────
     p_meter = Progress(conf.Nt, 1, "Computing...")
@@ -69,7 +74,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     for n in 1:conf.Nt
 
         # BDF1（首步）或 BDF2
-        bdf = n == 1 ? BDFCoeff(1.0, -1.0, 0.0) : BDFCoeff(1.5, -2.0, 0.5)
+        bdf = bdf_coeff(n) #n == 1 ? BDFCoeff(1.0, -1.0, 0.0) : BDFCoeff(1.5, -2.0, 0.5)
 
         # ── 核心 7 步 ──
         step1_res = solve_step1(present, old, ops, conf, bdf)
@@ -81,7 +86,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         step7_res = solve_step7(present, ops, conf, step6_res, bdf)
 
         # ── 状态更新 ──
-        copy_fieldstate!(old, present)   # present → old
+        update_state!(old, present)   # old <-- present
 
         # 谱空间
         present.phi_hat .= step6_res.phi_hat
@@ -124,7 +129,7 @@ end
 
 ## ────────────────────────────────────────────────────────────────
 # 辅助函数
-
+"""
 function copy_fieldstate!(dest::FieldState, src::FieldState)
     for f in (:phi, :phi_hat, :psi, :psi_hat,
               :u, :u_hat, :p, :p_hat,
@@ -137,7 +142,7 @@ function copy_fieldstate!(dest::FieldState, src::FieldState)
     dest.R3 = src.R3
     dest.A  = src.A    # 修正：补全 A 字段
 end
-
+"""
 function save_visualization(state::FieldState, conf::Config, t::Float64, path::String)
     fig = Figure(size = (1200, 1000), backgroundcolor = :white)  # 修正：size
     ax  = Axis(fig[1, 1], aspect=DataAspect(),

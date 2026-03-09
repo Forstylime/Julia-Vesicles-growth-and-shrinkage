@@ -26,17 +26,18 @@ include("../src/SpectralUtils.jl")
 #  accidentally swaps Nx and Ny.
 # ============================================================
 const cfg = Config(
+    N = 1,
     epsilon=0.05,  M_phi=1.0,  M0_psi=1.0,  eta=1.0,
     gamma_surf=1.0, gamma_area=1.0, gamma_bend=1.0,
-    gamma_in=1.0,  beta_in=0.0,  psi_in=1.0,
-    gamma_out=1.0, beta_out=0.0, psi_out=-1.0,
+    gamma_in=1.0,  beta_in=0.0,  psi_in=[0.1],
+    gamma_out=1.0, beta_out=0.0, psi_out=[0.8],
     lamda=1,
     S1=1.0, S2=1.0, S3=1.0, S4=1.0,
     C1=1.0, C2=1.0, C3=1.0,
     dt=1e-3, T=1.0,
     Nx=64, Ny=64,
     Lx=2π,  Ly=2π,
-    tol=1e-10, goal=:minimize_energy,
+    tol=1e-10, goal=:shrinkage,
     area_target=0.5
 )
 
@@ -267,7 +268,7 @@ end
     to_spectral!(f_hat, f, ops)
     to_spectral!(g_hat, g, ops)
 
-    multpl!(fg_hat, f_hat, g_hat, ops)
+    mult!(fg_hat, f_hat, g_hat, ops)
     to_physical!(fg_back, fg_hat, ops)
 
     @test norm(fg_back .- fg, Inf) < 1e-15
@@ -291,7 +292,7 @@ end
     to_spectral!(h_hat,h,ops)
 
     #multiplication
-    multpl!(hh_hat,h_hat,h_hat,ops)
+    mult!(hh_hat,h_hat,h_hat,ops)
     to_physical!(hh_back,hh_hat,ops)
 
     err = norm(hh_back .- exact,Inf)
@@ -303,8 +304,8 @@ end
     uv_hat = zeros(ComplexF64, Nx÷2+1, Ny)
     vu_hat = zeros(ComplexF64, Nx÷2+1, Ny)
 
-    multpl!(uv_hat, f_hat, g_hat, ops)
-    multpl!(vu_hat, g_hat, f_hat, ops)
+    mult!(uv_hat, f_hat, g_hat, ops)
+    mult!(vu_hat, g_hat, f_hat, ops)
 
     @test uv_hat ≈ vu_hat   atol=1e-15
 
@@ -318,17 +319,17 @@ end
 
     Nx, Ny = cfg.Nx, cfg.Ny
     Nkx    = Nx ÷ 2 + 1
-    Nφ     = 1   # single phase field for now
+    N     = cfg.N   # single phase field for now
 
     # Helper: build a FieldState filled with a constant value c
     function make_state(c::Float64)
         FieldState(
-            fill(c,  Nx,  Ny, Nφ),   fill(complex(c), Nkx, Ny, Nφ),  # phi
-            fill(c,  Nx,  Ny),        fill(complex(c), Nkx, Ny),       # psi
+            fill(c,  Nx,  Ny, N),   fill(complex(c), Nkx, Ny, N),  # phi
+            fill(c,  Nx,  Ny, N),        fill(complex(c), Nkx, Ny, N),       # psi
             fill(c,  Nx,  Ny, 2),     fill(complex(c), Nkx, Ny, 2),    # u
             fill(c,  Nx,  Ny),        fill(complex(c), Nkx, Ny),       # p
-            fill(c,  Nx,  Ny),        fill(complex(c), Nkx, Ny),       # mu
-            fill(c,  Nx,  Ny),        fill(complex(c), Nkx, Ny),       # nu
+            fill(c,  Nx,  Ny, N),        fill(complex(c), Nkx, Ny, N),       # mu
+            fill(c,  Nx,  Ny, N),        fill(complex(c), Nkx, Ny, N),       # nu
             c, c, c, c,   # Q, R1, R2, R3
             c             # area_lambda
         )

@@ -26,8 +26,9 @@ Physical parameters use their standard symbol names from the paper.
 Rename `A` → `area_target` to avoid collision with the matrix variable A
 used throughout the solver steps.
 """
-struct Config
+mutable struct Config
     # --- Physical parameters ---
+    N             :: Int          # number of phase fields (N=1 for single SAV)
     epsilon       :: Float64
     M_phi         :: Float64
     M0_psi        :: Float64
@@ -38,9 +39,11 @@ struct Config
     gamma_in      :: Int
     beta_in       :: Int
     psi_in        :: Float64
+    psi_in_v      :: Vector{Float64}
     gamma_out     :: Int
     beta_out      :: Int
     psi_out       :: Float64
+    psi_out_v     :: Vector{Float64}
     lamda         :: Int
 
     # --- Stabilization and SAV parameters ---
@@ -72,8 +75,8 @@ struct Config
     goal :: Symbol
 
     # --- Physical constraint target ---
-    # Renamed from `A` to avoid collision with matrix variable A in solvers
-    area_target :: Float64
+    # Renamed from `A0` to avoid collision with matrix variable A in solvers
+    A0 :: Float64
 end
 
 """
@@ -90,7 +93,7 @@ cfg = Config(
     epsilon=0.05, M_phi=1.0, M0_psi=1.0, eta=1.0,
     gamma_surf=1.0, gamma_area=1.0, gamma_bend=1.0,
     gamma_in=1.0, beta_in=0.0, psi_in=1.0,
-    gamma_out=1.0, beta_out=0.0, psi_out=-1.0,
+    gamma_out=1.0, beta_out=0.0, psi_out=1.0,
     lamda=1,
     S1=1.0, S2=1.0, S3=1.0, S4=1.0,
     C1=1.0, C2=1.0, C3=1.0,
@@ -100,27 +103,29 @@ cfg = Config(
 )
 ```
 """
+
 function Config(;
+        N,
         epsilon, M_phi, M0_psi, eta,
         gamma_surf, gamma_area, gamma_bend,
-        gamma_in, beta_in, psi_in,
-        gamma_out, beta_out, psi_out,
+        gamma_in, beta_in, psi_in, psi_in_v,
+        gamma_out, beta_out, psi_out, psi_out_v,
         lamda,
         S1, S2, S3, S4,
         C1, C2, C3,
         dt, T, Nx, Ny, Lx, Ly,
-        tol, goal,
-        area_target)
+        tol, goal, A0)
 
     Nt = round(Int, T / dt)
     dx = Lx / Nx
     dy = Ly / Ny
 
     return Config(
+        N,
         epsilon, M_phi, M0_psi, eta,
         gamma_surf, gamma_area, gamma_bend,
-        gamma_in, beta_in, psi_in,
-        gamma_out, beta_out, psi_out,
+        gamma_in, beta_in, psi_in, psi_in_v,
+        gamma_out, beta_out, psi_out, psi_out_v,
         lamda,
         S1, S2, S3, S4,
         C1, C2, C3,
@@ -128,7 +133,7 @@ function Config(;
         Nx, Ny, Lx, Ly,
         dx, dy,
         tol, goal,
-        area_target
+        A0
     )
 end
 
@@ -163,12 +168,12 @@ DO use the provided: `update_state!(state_prev, state_curr)`
 """
 mutable struct FieldState
     # --- Phase field and its spectrum ---
-    phi     :: Array{Float64, 3}     # Nx × Ny × Nφ
-    phi_hat :: Array{ComplexF64, 3}  # (Nx÷2+1) × Ny × Nφ
+    phi     :: Array{Float64, 3}     # Nx × Ny × N
+    phi_hat :: Array{ComplexF64, 3}  # (Nx÷2+1) × Ny × N
 
     # --- Membrane field and its spectrum ---
-    psi     :: Matrix{Float64}       # Nx × Ny
-    psi_hat :: Matrix{ComplexF64}    # (Nx÷2+1) × Ny
+    psi     :: Array{Float64, 3}       # Nx × Ny × N
+    psi_hat :: Array{ComplexF64, 3}    # (Nx÷2+1) × Ny × N
 
     # --- Velocity field and its spectrum ---
     u       :: Array{Float64, 3}     # Nx × Ny × 2
@@ -179,21 +184,49 @@ mutable struct FieldState
     p_hat   :: Matrix{ComplexF64}    # (Nx÷2+1) × Ny
 
     # --- Chemical potential φ and its spectrum ---
-    mu      :: Matrix{Float64}       # Nx × Ny
-    mu_hat  :: Matrix{ComplexF64}    # (Nx÷2+1) × Ny
+    mu      :: Array{Float64, 3}       # Nx × Ny × N
+    mu_hat  :: Array{ComplexF64, 3}    # (Nx÷2+1) × Ny × N
 
     # --- Chemical potential ψ and its spectrum ---
-    nu      :: Matrix{Float64}       # Nx × Ny
-    nu_hat  :: Matrix{ComplexF64}    # (Nx÷2+1) × Ny
+    nu      :: Array{Float64, 3}       # Nx × Ny × N
+    nu_hat  :: Array{ComplexF64, 3}    # (Nx÷2+1) × Ny × N
 
     # --- SAV scalar variables (mutated every timestep) ---
     Q  :: Float64
     R1 :: Float64
     R2 :: Float64
     R3 :: Float64
+end
 
-    # --- Physical constraint auxiliary scalar ---
-    area_lambda :: Float64
+# 定义构造函数进行预分配
+function FieldState(Nx::Int, Ny::Int, N::Int)
+    # 谱空间维度 (假设使用了 RFFT，通常是 Nx/2 + 1)
+    Nx_hat = Nx ÷ 2 + 1
+    
+    # 预分配内存
+    phi     = zeros(Float64, Nx, Ny, N)
+    phi_hat = zeros(ComplexF64, Nx_hat, Ny, N)
+    
+    psi     = zeros(Float64, Nx, Ny, N)
+    psi_hat = zeros(ComplexF64, Nx_hat, Ny, N)
+    
+    u       = zeros(Float64, Nx, Ny, 2)
+    u_hat   = zeros(ComplexF64, Nx_hat, Ny, 2)
+    
+    p       = zeros(Float64, Nx, Ny)
+    p_hat   = zeros(ComplexF64, Nx_hat, Ny)
+    
+    mu      = zeros(Float64, Nx, Ny, N)
+    mu_hat  = zeros(ComplexF64, Nx_hat, Ny, N)
+    
+    nu      = zeros(Float64, Nx, Ny, N)
+    nu_hat  = zeros(ComplexF64, Nx_hat, Ny, N)
+    
+    # 初始化标量变量
+    Q, R1, R2, R3 = 0.0, 0.0, 0.0, 0.0
+    
+    # 返回构造好的实例
+    return FieldState(phi, phi_hat, psi, psi_hat, u, u_hat, p, p_hat, mu, mu_hat, nu, nu_hat, Q, R1, R2, R3)
 end
 
 """
@@ -236,8 +269,7 @@ end
 """
     Operators{P, IP, PP, IPP}
 
-Spectral operators and FFTW plans for both the physical grid and the
-3/2-padded dealiasing grid.
+Spectral operators and FFTW plans
 
 # Sign convention
 All derivative operators follow the standard spectral convention:
@@ -254,7 +286,6 @@ the correct shape for all `*_hat` fields in FieldState.
 
 Type parameters are inferred by build_operators(); never set manually.
   P, IP:    rfft/irfft plan types for the Nx×Ny physical grid
-  PP, IPP:  rfft/irfft plan types for the Nx_pad×Ny_pad padded grid
 """
 struct Operators{P, IP}
     K          :: NTuple{2, Matrix{Float64}}
@@ -263,6 +294,10 @@ struct Operators{P, IP}
     Biharmonic :: Matrix{Float64}
     fft_plan   :: P
     ifft_plan  :: IP
+    fft_plan_1
+    ifft_plan_1
+    fft_plan_2 :: P
+    ifft_plan_2:: IP
     Nx         :: Int
     Ny         :: Int
 end

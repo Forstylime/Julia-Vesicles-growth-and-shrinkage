@@ -23,8 +23,8 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
     M_max = maximum(M_psi)
     
     # 3. 计算非线性项的变分导数 (频谱)
-    H1_star_hat = ops.fft_plan * get_H1(phi_star, phi_star_hat, ops, conf)
-    H2_star_hat = ops.fft_plan * get_H2(phi_star, phi_star_hat, ops, conf)
+    H1_star_hat = ops.fft_plan * get_H1(phi_star, ops, conf)
+    H2_star_hat = ops.fft_plan * get_H2(phi_star, ops, conf)
     H3_star_hat = ops.fft_plan * get_H3(phi_star, psi_star, conf)
     G_star_hat  = ops.fft_plan * get_MG(phi_star, psi_star, conf)
 

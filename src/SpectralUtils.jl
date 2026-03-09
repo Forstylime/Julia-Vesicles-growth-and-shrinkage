@@ -17,7 +17,7 @@ using FFTW
 # ============================================================
 
 """
-    build_operators(cfg::Config) -> Operators
+build_operators(cfg::Config) -> Operators
 
 Precompute all spectral derivative operators and FFTW plans from `cfg`.
 Called once before the time loop.
@@ -39,6 +39,7 @@ For an Nx×Ny real field:
 function build_operators(cfg::Config)
     Nx, Ny = cfg.Nx, cfg.Ny
     Lx, Ly = cfg.Lx, cfg.Ly
+    N = cfg.N
 
     # ----------------------------------------------------------
     # 1. Wavenumber vectors (rfft layout)
@@ -66,9 +67,9 @@ function build_operators(cfg::Config)
     #    K2 = kx² + ky²  shape: (Nx÷2+1) × Ny  (via broadcast, no temp alloc)
     #    These are real-valued (no imaginary part needed).
     # ----------------------------------------------------------
-    K2         = @. kx^2 + ky^2              # (Nx÷2+1) × Ny, Float64
-    Laplacian        = @. -K2                      # negative semi-definite
-    Biharmonic        = @. (kx^2 + ky^2)^2                    # positive semi-definite
+    K2              = @. kx^2 + ky^2              # (Nx÷2+1) × Ny, Float64
+    Laplacian       = @. -K2                      # negative semi-definite
+    Biharmonic      = @. (kx^2 + ky^2)^2          # positive semi-definite
 
     # ----------------------------------------------------------
     # 4. FFTW plans on the PHYSICAL grid (Nx × Ny)
@@ -80,16 +81,27 @@ function build_operators(cfg::Config)
     #    and picks the fastest. Startup cost ~seconds; per-call cost minimal.
     #    Use FFTW.ESTIMATE during development if startup time is annoying.
     # ----------------------------------------------------------
-    tmp_real    = zeros(Float64,    Nx, Ny)
-    tmp_complex = zeros(ComplexF64, Nx÷2+1, Ny)
+    tmp_real    = zeros(Float64,    Nx, Ny, N)
+    tmp_complex = zeros(ComplexF64, Nx÷2+1, Ny, N)
+    tmp_real_1    = zeros(Float64,    Nx, Ny)
+    tmp_complex_1 = zeros(ComplexF64, Nx÷2+1, Ny)
+    tmp_real_2    = zeros(Float64,    Nx, Ny, 2)
+    tmp_complex_2 = zeros(ComplexF64, Nx÷2+1, Ny, 2)
 
-    fft_plan  = plan_rfft(tmp_real;           flags=FFTW.MEASURE)
-    ifft_plan = plan_irfft(tmp_complex, Nx;   flags=FFTW.MEASURE)
+    fft_plan  = plan_rfft(tmp_real,         (1, 2); flags=FFTW.MEASURE)
+    ifft_plan = plan_irfft(tmp_complex, Nx, (1, 2); flags=FFTW.MEASURE)
+    fft_plan_1  = plan_rfft(tmp_real_1,         (1, 2); flags=FFTW.MEASURE)
+    ifft_plan_1 = plan_irfft(tmp_complex_1, Nx, (1, 2); flags=FFTW.MEASURE)
+    fft_plan_2  = plan_rfft(tmp_real_2,         (1, 2); flags=FFTW.MEASURE)
+    ifft_plan_2 = plan_irfft(tmp_complex_2, Nx, (1, 2); flags=FFTW.MEASURE)
+
 
     return Operators(
     K, D1,                          # NTuple, NTuple
     Laplacian, Biharmonic,          # Matrix, Matrix
     fft_plan,  ifft_plan,           # P,  IP   (物理网格)
+    fft_plan_1,  ifft_plan_1,
+    fft_plan_2,  ifft_plan_2,
     Nx, Ny                          # Int, Int
 )
 end
@@ -100,30 +112,27 @@ end
 # ============================================================
 
 """
-    to_spectral!(u_hat, u, ops)
+    to_spectral(u, ops)
 
 In-place forward transform: physical field `u` (Nx×Ny, real)
 → spectral field `u_hat` ((Nx÷2+1)×Ny, complex).
 Writes result into pre-allocated `u_hat`.
 """
-@inline function to_spectral!(u_hat::AbstractMatrix{ComplexF64},
-                               u::AbstractMatrix{Float64},
-                               ops::Operators)
-    u_hat .= ops.fft_plan * u
+@inline function to_spectral(u::AbstractArray{Float64}, ops::Operators)
+    u_hat = ops.fft_plan * u
     return u_hat
 end
 
 """
-    to_physical!(u, u_hat, ops)
+    to_physical(u, u_hat, ops)
 
 In-place inverse transform: spectral field `u_hat` ((Nx÷2+1)×Ny)
 → physical field `u` (Nx×Ny, real).
 Writes result into pre-allocated `u`.
 """
-@inline function to_physical!(u::AbstractMatrix{Float64},
-                               u_hat::AbstractMatrix{ComplexF64},
+@inline function to_physical(u_hat::AbstractArray{ComplexF64},
                                ops::Operators)
-    u .= ops.ifft_plan * u_hat
+    u = ops.ifft_plan * u_hat
     return u
 end
 
@@ -135,7 +144,7 @@ end
 """
 谱系数点乘函数，不用去混叠
 """
-function multpl!(
+function mult!(
     w_hat::AbstractMatrix{ComplexF64},
     u_hat::AbstractMatrix{ComplexF64},
     v_hat::AbstractMatrix{ComplexF64},
