@@ -54,7 +54,7 @@ function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
         Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
         tol  = 1e-12,
         goal = goal,
-        A0   = zeros(Float64, N)    # 占位，后续由 set_A 更新
+        A0   = zeros(Float64, N),  # 占位，后续由 set_A 更新
     )
 end
 

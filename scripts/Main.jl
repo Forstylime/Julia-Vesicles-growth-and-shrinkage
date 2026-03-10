@@ -6,7 +6,7 @@ using LinearAlgebra
 using Printf
 using ProgressMeter
 using CairoMakie
-using IterativeSolvers
+#using IterativeSolvers
 
 include("../src/Types.jl")
 include("../src/SpectralUtils.jl")
@@ -32,10 +32,8 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     present = generate_initial_condition(conf, ops, state_type)
 
     # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
-    for n in 1:conf.N
-        A_n = calculate_area(present.phi[:, :, n], ops, conf)
-        conf.A0[n] = A_n
-    end
+    A_n = calculate_area(present.phi, ops, conf)
+    conf.A0 = A_n
 
     # 初始化 SAV 变量
     present.R1 = sqrt(get_W1(present.phi, ops, conf) + conf.C1)

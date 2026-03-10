@@ -77,6 +77,7 @@ mutable struct Config
     # --- Physical constraint target ---
     # Renamed from `A0` to avoid collision with matrix variable A in solvers
     A0 :: Vector{Float64}
+    spe_len :: Int
 end
 
 """
@@ -120,6 +121,8 @@ function Config(;
     dx = Lx / Nx
     dy = Ly / Ny
 
+    spe_len = (Nx ÷ 2 + 1) * Ny * N  # 频谱空间的总长度，供线性求解器使用
+
     return Config(
         N,
         epsilon, M_phi, M0_psi, eta,
@@ -133,7 +136,8 @@ function Config(;
         Nx, Ny, Lx, Ly,
         dx, dy,
         tol, goal,
-        A0
+        A0,
+        spe_len
     )
 end
 
@@ -300,6 +304,12 @@ struct Operators{P, IP}
     ifft_plan_2:: IP
     Nx         :: Int
     Ny         :: Int
+    temp_real1
+    temp_real2
+    temp_real3
+    temp_comp1
+    temp_comp2
+    temp_comp3
 end
 
 

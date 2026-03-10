@@ -95,6 +95,12 @@ function build_operators(cfg::Config)
     fft_plan_2  = plan_rfft(tmp_real_2,         (1, 2); flags=FFTW.MEASURE)
     ifft_plan_2 = plan_irfft(tmp_complex_2, Nx, (1, 2); flags=FFTW.MEASURE)
 
+    temp_real1 = tmp_real
+    temp_real2 = tmp_real
+    temp_real3 = tmp_real
+    temp_comp1 = tmp_complex
+    temp_comp2 = tmp_complex
+    temp_comp3 = tmp_complex
 
     return Operators(
     K, D1,                          # NTuple, NTuple
@@ -102,7 +108,9 @@ function build_operators(cfg::Config)
     fft_plan,  ifft_plan,           # P,  IP   (物理网格)
     fft_plan_1,  ifft_plan_1,
     fft_plan_2,  ifft_plan_2,
-    Nx, Ny                          # Int, Int
+    Nx, Ny,                          # Int, Int
+    temp_real1, temp_real2, temp_real3,
+    temp_comp1, temp_comp2, temp_comp3
 )
 end
 
@@ -118,9 +126,9 @@ In-place forward transform: physical field `u` (Nx×Ny, real)
 → spectral field `u_hat` ((Nx÷2+1)×Ny, complex).
 Writes result into pre-allocated `u_hat`.
 """
-@inline function to_spectral(u::AbstractArray{Float64}, ops::Operators)
-    u_hat = ops.fft_plan * u
-    return u_hat
+@inline function to_spectral!(buffer::AbstractArray{ComplexF64}, u::AbstractArray{Float64}, ops::Operators)
+    mul!(buffer, ops.fft_plan, u)  # in-place transform
+    return buffer
 end
 
 """
@@ -130,40 +138,35 @@ In-place inverse transform: spectral field `u_hat` ((Nx÷2+1)×Ny)
 → physical field `u` (Nx×Ny, real).
 Writes result into pre-allocated `u`.
 """
-@inline function to_physical(u_hat::AbstractArray{ComplexF64},
-                               ops::Operators)
-    u = ops.ifft_plan * u_hat
-    return u
+@inline function to_physical!(buffer::AbstractArray{Float64}, u_hat::AbstractArray{ComplexF64}, ops::Operators)
+    mul!(buffer, ops.ifft_plan, u_hat)  # in-place transform
+    return buffer
 end
 
 
 # ============================================================
-#  DEALIASED MULTIPLICATION  (3/2 rule)
+#  MULTIPLICATION
 # ============================================================
 
 """
 谱系数点乘函数，不用去混叠
 """
 function mult!(
-    w_hat::AbstractMatrix{ComplexF64},
+    buffer::AbstractMatrix{ComplexF64},
     u_hat::AbstractMatrix{ComplexF64},
     v_hat::AbstractMatrix{ComplexF64},
     ops::Operators
 )
 
-Nx = ops.Nx
-Ny = ops.Ny
+    Nx = ops.Nx
+    Ny = ops.Ny
 
-    u = zeros(Float64,Nx,Ny)
-    v = zeros(Float64,Nx,Ny)
-    w = zeros(Float64,Nx,Ny)
+    u = to_physical!(ops.temp_real1,u_hat,ops)
+    v = to_physical!(ops.temp_real2,v_hat,ops)
 
-    to_physical!(u,u_hat,ops)
-    to_physical!(v,v_hat,ops)
+    ops.temp_real3 .= u .* v
 
-    @. w = u*v
+    to_spectral!(buffer, ops.temp_real3, ops)
 
-    to_spectral!(w_hat,w,ops)
-
-    return w_hat
+    return buffer
 end

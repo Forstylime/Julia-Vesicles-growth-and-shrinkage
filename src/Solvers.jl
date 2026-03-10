@@ -2,7 +2,7 @@
 
 using LinearMaps
 using LinearAlgebra
-# using IterativeSolvers
+#using IterativeSolvers
 using Krylov
 
 """
@@ -23,10 +23,7 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
     M_max = maximum(M_psi)
     
     # 3. 计算非线性项的变分导数 (频谱)
-    H1_star_hat = ops.fft_plan * get_H1(phi_star, ops, conf)
-    H2_star_hat = ops.fft_plan * get_H2(phi_star, ops, conf)
-    H3_star_hat = ops.fft_plan * get_H3(phi_star, psi_star, conf)
-    G_star_hat  = ops.fft_plan * get_MG(phi_star, psi_star, conf)
+    "由于会用到多次to_specral!，预分配内存不够，转移到具体计算模块以避免前者被覆盖"
 
     # 4. 预定义算子 (L_phi)
     L_phi = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
@@ -35,35 +32,38 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
 
     # 5. 定义 BiCGSTAB 算子 A(psi)
     # y = (a/dt)I - div(M_psi * grad(L_psi * x))
-    function A_psi_func!(y_vec, x_vec)
-        x_hat = reshape(x_vec, conf.Nx, conf.Ny)
+    function A_psi_func!(y_vec, x_vec, conf::Config)
+        # 输入 x_hat 是频谱空间的Vector(Nx*Ny*N,1)，输出 y_hat 也是频谱空间的Vector(Nx*Ny*N,1)
+        x_hat = reshape(x_vec, conf.Nx÷2 + 1, conf.Ny, conf.N) # 将输入的向量重塑为频谱空间的三维数组
+        y_hat = reshape(y_vec, conf.Nx÷2 + 1, conf.Ny, conf.N) # 输出也重塑为频谱空间的三维数组
         # 内部算子作用: L_psi * x_hat
-        temp_hat = L_psi .* x_hat
+        temp_hat = L_psi .* x_hat # 这里 L_psi 是scalar，但更广泛的形式是Array{Float64, 3}
         
         # 计算梯度 (频谱 -> 空间)
-        grad_x = real(ops.ifft_plan * (ops.D1[1] .* temp_hat))
-        grad_y = real(ops.ifft_plan * (ops.D1[2] .* temp_hat))
-        
+        grad_x = to_physical!(ops.temp_real1, ops.D1[1] .* temp_hat, ops) # Matrix(微分算子) .* Array ->(广播)-> Array 
+        grad_y = to_physical!(ops.temp_real2, ops.D1[2] .* temp_hat, ops) # 同上
+
         # 先在物理空间乘以 M_psi 后，再转回频谱计算散度
-        flux_x_hat = ops.fft_plan * (M_psi .* grad_x)
-        flux_y_hat = ops.fft_plan * (M_psi .* grad_y)
-        
+        flux_x_hat = to_spectral!(ops.temp_comp2, M_psi .* grad_x, ops) # M_psi 是 Array{Float64, 3}，grad_x 是 Array{Float64, 3}，逐元素乘积后转频谱
+        flux_y_hat = to_spectral!(ops.temp_comp3, M_psi .* grad_y, ops) # 同上
+
         # 组合: (a/dt)*x_hat - div(flux)
-        y_hat = @. (a / dt) * x_hat - (ops.D1[1] * flux_x_hat + ops.D1[2] * flux_y_hat)
-        y_vec .= vec(y_hat)
+        y_hat .= (a / dt) * x_hat - (ops.D1[1] .* flux_x_hat + ops.D1[2] .* flux_y_hat)
+        return reshape(y_hat, conf.spe_len) # 最后输出为向量形式
     end
 
     # 构造 LinearMap
-    A_psi = LinearMap(A_psi_func!, conf.Nx * conf.Ny; ismutating=true)
+    A_psi = LinearMap((y, x) -> A_psi_func!(y, x, conf), conf.spe_len; ismutating=true)
 
     # 预处理子: P_inv = 1 / ( (a/dt) - M_max * Laplacian * L_psi )
     P_inv_hat = @. 1.0 / ( (a / dt) - M_max * ops.Laplacian * L_psi )
-    function prec_func!(y_vec, r_vec)
-        r_hat = reshape(r_vec, conf.Nx, conf.Ny)
-        y_hat = r_hat .* P_inv_hat
-        y_vec .= vec(y_hat)
+    function prec_func!(y_vec, r_vec, conf::Config)
+        r_hat = reshape(r_vec, conf.Nx÷2 + 1, conf.Ny, conf.N)
+        y_hat = reshape(y_vec, conf.Nx÷2 + 1, conf.Ny, conf.N)
+        y_hat .= r_hat .* P_inv_hat
+        return reshape(y_hat, conf.spe_len) # 输出为向量形式
     end
-    P = LinearMap(prec_func!, conf.Nx * conf.Ny; ismutating=true)
+    P = LinearMap((y, x) -> prec_func!(y, x, conf), conf.spe_len; ismutating=true)
 
     # --- 开始分步求解 (11, 12, 13, 14, 21, ...) ---
     
@@ -71,46 +71,60 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
     res = Dict{Symbol, Any}()
 
     # 求解函数封装
-    function solve_psi(rhs_hat)
-        sol_vec, stats = Krylov.bicgstab(A_psi, vec(rhs_hat); M=P, atol=0.0, rtol=conf.tol, itmax=50)
-        !stats.solved && @warn "BiCGSTAB 未收敛于 psi 求解"
-        return reshape(sol_vec, conf.Nx, conf.Ny)
+    function solve_psi(rhs_hat, conf::Config)
+        rhs_vec = reshape(rhs_hat, conf.spe_len)
+        sol_hat, stats = bicgstab(A_psi, rhs_vec; M=P, atol=0.0, rtol=conf.tol, itmax=50)
+        !stats.solved && @warn "BiCGSTAB 未收敛: $(stats.status)"
+        return reshape(sol_hat, conf.Nx÷2 + 1, conf.Ny, conf.N)
     end
 
     # 11: 历史项
     rhs_phi_11 = @. -(b * present.phi_hat + c * old.phi_hat) / dt
     res[:phi_11_np1_hat] = rhs_phi_11 ./ lhs_phi
-    
+    res[:mu_11_np1_hat] = L_phi .* res[:phi_11_np1_hat]
+
     rhs_psi_11 = @. -(b * present.psi_hat + c * old.psi_hat) / dt
-    res[:psi_11_np1_hat] = solve_psi(rhs_psi_11)
+    res[:psi_11_np1_hat] = solve_psi(rhs_psi_11, conf)
+    res[:nu_11_np1_hat] = L_psi .* res[:psi_11_np1_hat]
 
     # 12: H1/G 项
+    H1_star_hat = to_spectral!(ops.temp_comp1, get_H1(phi_star, ops, conf), ops)
     rhs_phi_12 = @. -conf.M_phi * H1_star_hat
     res[:phi_12_np1_hat] = rhs_phi_12 ./ lhs_phi
+    res[:mu_12_np1_hat]  = L_phi .* res[:phi_12_np1_hat] .+ H1_star_hat
     
     # G 的散度项: div(M_psi * grad(G_star))
-    grad_G_x = real(ops.ifft_plan * (ops.D1[1] .* G_star_hat))
-    grad_G_y = real(ops.ifft_plan * (ops.D1[2] .* G_star_hat))
-    rhs_psi_12 = ops.D1[1] .* (ops.fft_plan * (M_psi .* grad_G_x)) .+ 
-                 ops.D1[2] .* (ops.fft_plan * (M_psi .* grad_G_y))
-    res[:psi_12_np1_hat] = solve_psi(rhs_psi_12)
+    G_star_hat  = to_spectral!(ops.temp_comp1, get_MG(phi_star, psi_star, conf), ops)
+    grad_G_x = to_physical!(ops.temp_real1, ops.D1[1] .* G_star_hat, ops)
+    grad_G_y = to_physical!(ops.temp_real2, ops.D1[2] .* G_star_hat, ops)
+    rhs_psi_12 = ops.D1[1] .* (to_spectral!(ops.temp_comp2, M_psi .* grad_G_x, ops)) .+ 
+                 ops.D1[2] .* (to_spectral!(ops.temp_comp3, M_psi .* grad_G_y, ops))
+    res[:psi_12_np1_hat] = solve_psi(rhs_psi_12, conf)
+    res[:nu_12_np1_hat] = L_psi .* res[:psi_12_np1_hat] .+ G_star_hat
 
     # 13 & 14 (仅 phi)
+    H2_star_hat = to_spectral!(ops.temp_comp2, get_H2(phi_star, ops, conf), ops)
+    H3_star_hat = to_spectral!(ops.temp_comp3, get_H3(phi_star, psi_star, conf), ops)
     res[:phi_13_np1_hat] = (@. -conf.M_phi * H2_star_hat) ./ lhs_phi
     res[:phi_14_np1_hat] = (@. -conf.M_phi * H3_star_hat) ./ lhs_phi
+    res[:mu_13_np1_hat] = L_phi .* res[:phi_13_np1_hat] .+ H2_star_hat
+    res[:mu_14_np1_hat] = L_phi .* res[:phi_14_np1_hat] .+ H3_star_hat
 
     # 21: 对流项
     # 计算 u_star · grad(phi_star)
     u_star = @. 2.0 * present.u - old.u
-    grad_phi_star_x = real(ops.ifft_plan * (ops.D1[1] .* phi_star_hat))
-    grad_phi_star_y = real(ops.ifft_plan * (ops.D1[2] .* phi_star_hat))
+    grad_phi_star_x = to_physical!(ops.temp_real1, ops.D1[1] .* phi_star_hat, ops)
+    grad_phi_star_y = to_physical!(ops.temp_real2, ops.D1[2] .* phi_star_hat, ops)
     u_grad_phi = @. u_star[:,:,1] * grad_phi_star_x + u_star[:,:,2] * grad_phi_star_y
-    res[:phi_21_np1_hat] = (-(ops.fft_plan * u_grad_phi)) ./ lhs_phi
+    res[:phi_21_np1_hat] = (-(to_spectral!(ops.temp_comp1, u_grad_phi, ops))) ./ lhs_phi
+    res[:mu_21_np1_hat] = L_phi .* res[:phi_21_np1_hat]
 
-    grad_psi_star_x = real(ops.ifft_plan * (ops.D1[1] .* psi_star_hat))
-    grad_psi_star_y = real(ops.ifft_plan * (ops.D1[2] .* psi_star_hat))
+    grad_psi_star_x = to_physical!(ops.temp_real1, ops.D1[1] .* psi_star_hat, ops)
+    grad_psi_star_y = to_physical!(ops.temp_real2, ops.D1[2] .* psi_star_hat, ops)
     u_grad_psi = @. u_star[:,:,1] * grad_psi_star_x + u_star[:,:,2] * grad_psi_star_y
-    res[:psi_21_np1_hat] = solve_psi(-(ops.fft_plan * u_grad_psi))
+    rhs_psi_21 = -(to_spectral!(ops.temp_comp1, u_grad_psi, ops))
+    res[:psi_21_np1_hat] = solve_psi(rhs_psi_21, conf)
+    res[:nu_21_np1_hat] = L_psi .* res[:psi_21_np1_hat]
 
     # 逻辑优化：22, 23, 24 与之前的计算结果一致，直接复用
     res[:phi_22_np1_hat] = res[:phi_12_np1_hat]
@@ -118,16 +132,7 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
     res[:phi_23_np1_hat] = res[:phi_13_np1_hat]
     res[:phi_24_np1_hat] = res[:phi_14_np1_hat]
 
-    # 计算配套的 mu 和 nu (频谱)
-    res[:mu_11_np1_hat] = L_phi .* res[:phi_11_np1_hat]
-    res[:nu_11_np1_hat] = L_psi .* res[:psi_11_np1_hat]
-    res[:mu_12_np1_hat] = L_phi .* res[:phi_12_np1_hat] .+ H1_star_hat
-    res[:nu_12_np1_hat] = L_psi .* res[:psi_12_np1_hat] .+ G_star_hat
-    res[:mu_13_np1_hat] = L_phi .* res[:phi_13_np1_hat] .+ H2_star_hat
-    res[:mu_14_np1_hat] = L_phi .* res[:phi_14_np1_hat] .+ H3_star_hat
-    
-    res[:mu_21_np1_hat] = L_phi .* res[:phi_21_np1_hat]
-    res[:nu_21_np1_hat] = L_psi .* res[:psi_21_np1_hat]
+    # 计算配套的 mu 和 nu (频谱)  
     res[:mu_22_np1_hat] = res[:mu_12_np1_hat]
     res[:nu_22_np1_hat] = res[:nu_12_np1_hat]
     res[:mu_23_np1_hat] = res[:mu_13_np1_hat]
