@@ -31,9 +31,11 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     # ── 2. 生成初始场 ────────────────────────────────────────────
     present = generate_initial_condition(conf, ops, state_type)
 
-    # 用 f_surf 积分计算真实面积（与模型约定一致）
-    A0 = calculate_area(present.phi, ops, conf)
-    conf.A0 = A0
+    # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
+    for n in 1:conf.N
+        A_n = calculate_area(present.phi[:, :, n], ops, conf)
+        conf.A0[n] = A_n
+    end
 
     # 初始化 SAV 变量
     present.R1 = sqrt(get_W1(present.phi, ops, conf) + conf.C1)

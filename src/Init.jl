@@ -54,7 +54,7 @@ function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
         Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
         tol  = 1e-12,
         goal = goal,
-        A0   = 0.0    # 占位，后续由 set_A 更新
+        A0   = zeros(Float64, N)    # 占位，后续由 set_A 更新
     )
 end
 
@@ -142,7 +142,7 @@ end
 """
 第二阶段：用计算所得真实面积 A 重建 Config
 """
-function set_A(conf::Config, A::Float64)
+function set_A(conf::Config, A::Vector{Float64})
     return Config(
         N          = conf.N,
         epsilon    = conf.epsilon,

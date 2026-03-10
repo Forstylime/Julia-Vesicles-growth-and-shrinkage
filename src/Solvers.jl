@@ -156,8 +156,8 @@ function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf:
     psi_star = @. 2.0 * psi_n - psi_nm1
 
     # 获取物理空间的变分导数
-    H1_star = get_H1(phi_star, phi_star_hat, ops, conf)
-    H2_star = get_H2(phi_star, phi_star_hat, ops, conf)
+    H1_star = get_H1(phi_star, ops, conf)
+    H2_star = get_H2(phi_star, ops, conf)
     H3_star = get_H3(phi_star, psi_star, conf)
     G_star  = get_MG(phi_star, psi_star, conf)
 

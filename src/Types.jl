@@ -76,7 +76,7 @@ mutable struct Config
 
     # --- Physical constraint target ---
     # Renamed from `A0` to avoid collision with matrix variable A in solvers
-    A0 :: Float64
+    A0 :: Vector{Float64}
 end
 
 """
