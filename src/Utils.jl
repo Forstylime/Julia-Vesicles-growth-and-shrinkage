@@ -52,8 +52,10 @@ end
 "渗透能密度 f_osmotic"
 function f_osmotic(phi, psi, conf::Config)
     P     = p_phi(phi)
-    f_in  = @. 0.5 * conf.gamma_in  * (psi - conf.psi_in)^2  + conf.beta_in
-    f_out = @. 0.5 * conf.gamma_out * (psi - conf.psi_out)^2 + conf.beta_out
+    psi_in  = reshape(conf.psi_in_v, 1, 1, :)
+    psi_out = reshape(conf.psi_out_v, 1, 1, :)
+    f_in  = @. 0.5 * conf.gamma_in  * (psi - psi_in)^2  + conf.beta_in
+    f_out = @. 0.5 * conf.gamma_out * (psi - psi_out)^2 + conf.beta_out
     return @. ((1 + P) / 2) * f_in + ((1 - P) / 2) * f_out
 end
 
@@ -67,7 +69,7 @@ function calculate_area(phi::Array{Float64, 3}, ops::Operators, conf::Config)
     for n in 1:conf.N
         area[n] = integrate(surf[:, :, n], conf) # 对每个囊泡的 surf 切片进行积分，得到对应的面积
     end
-    return area
+    return area # 返回一个长度为 N 的向量，每个元素是对应囊泡的面积
 end
 
 # ----------------------------------------------------------------
@@ -86,7 +88,7 @@ function compute_original_energy(state::FieldState, ops::Operators, conf::Config
         A_sperse[n] = calculate_area(state.phi[:, :, n], ops, conf)
         @info "囊泡 $n 的面积 = $(A_sperse[n])"
     end
-    F_a = sum(0.5 * conf.gamma_area * (A_sperse - conf.A0)^2)
+    F_a = sum(0.5 * conf.gamma_area * (A_sperse - state.A0)^2)
 
     return kinetic + conf.lambda * (F_s + F_b + F_o + F_a)
 end
@@ -158,9 +160,9 @@ end
 # SAV 根号内能量 W1, W2, W3，这里计算的都是各个囊泡的能量之和
 # ----------------------------------------------------------------
 
-function get_W1(phi, ops::Operators, conf::Config)
+function get_W1(phi, ops::Operators, conf::Config, A0::Vector{Float64})
     A_sperse = calculate_area(phi, ops, conf)
-    W1    = sum(0.5 .* conf.gamma_area .* (A_sperse - conf.A0).^2)
+    W1    = sum(0.5 .* conf.gamma_area .* (A_sperse .- A0).^2)
     W1 + conf.C1 < 0 && error("FATAL: W1 + C1 < 0，C1 偏小！W1 = $W1")
     return W1
 end
@@ -196,12 +198,12 @@ end
 # 因此返回的数组结构与 phi, psi 相同。由于第三个维度是囊泡索引，这里H_i的第三维也是变分导数索引，和囊泡索引对应。
 # ----------------------------------------------------------------
 
-function get_H1(phi::Array{Float64, 3}, ops::Operators, conf::Config)
-    W1      = get_W1(phi, ops, conf) # 这里的 W1 是所有囊泡的第一能量之和
+function get_H1(phi::Array{Float64, 3}, ops::Operators, conf::Config, A0::Vector{Float64})
+    W1      = get_W1(phi, ops, conf, A0) # 这里的 W1 是所有囊泡的第一能量之和
     R1      = sqrt(W1 + conf.C1)
     A_sperse = calculate_area(phi, ops, conf)
     omega   = get_omega(phi, ops, conf)
-    factor  = conf.gamma_area * (A_sperse - conf.A0) * (3 * sqrt(2) / 4)
+    factor  = conf.gamma_area * (A_sperse - A0) * (3 * sqrt(2) / 4)
     factor_view = reshape(factor, 1, 1, conf.N) # 将 factor 从 (N,) 变为 (1, 1, N)，以便与 omega 点乘广播
     return @. (factor_view * omega) / R1
 end
@@ -229,8 +231,10 @@ end
 function get_H3(phi, psi, conf::Config)
     W3    = get_W3(phi, psi, conf) # 这里的 W3 是所有囊泡的第三能量之和
     R3    = sqrt(W3 + conf.C3)
-    f_in  = @. 0.5 * conf.gamma_in  * (psi - conf.psi_in)^2  + conf.beta_in
-    f_out = @. 0.5 * conf.gamma_out * (psi - conf.psi_out)^2 + conf.beta_out
+    psi_in  = reshape(conf.psi_in_v, 1, 1, :)
+    psi_out = reshape(conf.psi_out_v, 1, 1, :)
+    f_in  = @. 0.5 * conf.gamma_in  * (psi - psi_in)^2  + conf.beta_in
+    f_out = @. 0.5 * conf.gamma_out * (psi - psi_out)^2 + conf.beta_out
     return @. (0.5 * p_phi_prime(phi) * (f_in - f_out)) / R3
 end
 
@@ -238,8 +242,10 @@ function get_MG(phi, psi, conf::Config)
     W3    = get_W3(phi, psi, conf) # 这里的 W3 是所有囊泡的第三能量之和
     R3    = sqrt(W3 + conf.C3)
     P     = p_phi(phi)
-    dF_in  = @. conf.gamma_in  * (psi - conf.psi_in)
-    dF_out = @. conf.gamma_out * (psi - conf.psi_out)
+    psi_in  = reshape(conf.psi_in_v, 1, 1, :)
+    psi_out = reshape(conf.psi_out_v, 1, 1, :)
+    dF_in  = @. conf.gamma_in  * (psi - psi_in)
+    dF_out = @. conf.gamma_out * (psi - psi_out)
     G1    = @. 0.5 * (1 + P) * dF_in + 0.5 * (1 - P) * dF_out
     G2    = @. conf.S4 * psi
     return @. (G1 - G2) / R3

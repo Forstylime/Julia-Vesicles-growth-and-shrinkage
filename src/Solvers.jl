@@ -11,6 +11,7 @@ Step 1: 求解分裂后的线性方程组组件
 function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf::Config, bdf::BDFCoeff)
     dt = conf.dt
     a, b, c = bdf.a, bdf.b, bdf.c  # 在独立的STRUCT中存储了 BDF2 系数
+    A0 = present.A0  # 预定义的目标面积 A0，作为 get_H1 的输入参数
     
     # 1. 构造外推状态 (Star states)
     phi_star = @. 2.0 * present.phi - old.phi
@@ -32,51 +33,73 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
 
     # 5. 定义 BiCGSTAB 算子 A(psi)
     # y = (a/dt)I - div(M_psi * grad(L_psi * x))
-    function A_psi_func!(y_vec, x_vec, conf::Config)
-        # 输入 x_hat 是频谱空间的Vector(Nx*Ny*N,1)，输出 y_hat 也是频谱空间的Vector(Nx*Ny*N,1)
-        x_hat = reshape(x_vec, conf.Nx÷2 + 1, conf.Ny, conf.N) # 将输入的向量重塑为频谱空间的三维数组
-        y_hat = reshape(y_vec, conf.Nx÷2 + 1, conf.Ny, conf.N) # 输出也重塑为频谱空间的三维数组
-        # 内部算子作用: L_psi * x_hat
-        temp_hat = L_psi .* x_hat # 这里 L_psi 是scalar，但更广泛的形式是Array{Float64, 3}
+    real_len = 2 * conf.spe_len  # 长度翻倍
+    function A_psi_func_real!(y_real, x_real, conf::Config)
+        # 零成本转换：将输入的 Float64 数组重新解释为 ComplexF64，并在不分配新内存的情况下 reshape
+        x_complex = reinterpret(ComplexF64, x_real)
+        y_complex = reinterpret(ComplexF64, y_real)
         
-        # 计算梯度 (频谱 -> 空间)
-        grad_x = to_physical!(ops.temp_real1, ops.D1[1] .* temp_hat, ops) # Matrix(微分算子) .* Array ->(广播)-> Array 
-        grad_y = to_physical!(ops.temp_real2, ops.D1[2] .* temp_hat, ops) # 同上
+        x_hat = reshape(x_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
+        y_hat = reshape(y_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
+        
+        # 内部计算逻辑保持原样，注意使用 @. 防止分配
+        @. ops.temp_comp1 = L_psi * x_hat 
+        grad_x = to_physical!(ops.temp_real1, @.(ops.D1[1] * ops.temp_comp1), ops) 
+        grad_y = to_physical!(ops.temp_real2, @.(ops.D1[2] * ops.temp_comp1), ops)
 
-        # 先在物理空间乘以 M_psi 后，再转回频谱计算散度
-        flux_x_hat = to_spectral!(ops.temp_comp2, M_psi .* grad_x, ops) # M_psi 是 Array{Float64, 3}，grad_x 是 Array{Float64, 3}，逐元素乘积后转频谱
-        flux_y_hat = to_spectral!(ops.temp_comp3, M_psi .* grad_y, ops) # 同上
+        flux_x_hat = to_spectral!(ops.temp_comp2, @.(M_psi * grad_x), ops)
+        flux_y_hat = to_spectral!(ops.temp_comp3, @.(M_psi * grad_y), ops)
 
-        # 组合: (a/dt)*x_hat - div(flux)
-        y_hat .= (a / dt) * x_hat - (ops.D1[1] .* flux_x_hat + ops.D1[2] .* flux_y_hat)
-        return reshape(y_hat, conf.spe_len) # 最后输出为向量形式
+        @. y_hat = (a / dt) * x_hat - (ops.D1[1] * flux_x_hat + ops.D1[2] * flux_y_hat)
+        
+        return y_real # 必须返回 y_real 满足 Krylov 的 in-place 规范
     end
 
-    # 构造 LinearMap
-    A_psi = LinearMap((y, x) -> A_psi_func!(y, x, conf), conf.spe_len; ismutating=true)
+    # 构建实数域上的 LinearMap
+    A_psi = LinearMap{Float64}((y, x) -> A_psi_func_real!(y, x, conf), real_len; ismutating=true)
 
-    # 预处理子: P_inv = 1 / ( (a/dt) - M_max * Laplacian * L_psi )
+    # 预处理子也做同样的包装
     P_inv_hat = @. 1.0 / ( (a / dt) - M_max * ops.Laplacian * L_psi )
-    function prec_func!(y_vec, r_vec, conf::Config)
-        r_hat = reshape(r_vec, conf.Nx÷2 + 1, conf.Ny, conf.N)
-        y_hat = reshape(y_vec, conf.Nx÷2 + 1, conf.Ny, conf.N)
-        y_hat .= r_hat .* P_inv_hat
-        return reshape(y_hat, conf.spe_len) # 输出为向量形式
+    function prec_func_real!(y_real, r_real, conf::Config)
+        r_complex = reinterpret(ComplexF64, r_real)
+        y_complex = reinterpret(ComplexF64, y_real)
+        
+        r_hat = reshape(r_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
+        y_hat = reshape(y_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
+        
+        # P_inv_hat 是纯实数，与复数 r_hat 点乘是合法的线性操作
+        @. y_hat = r_hat * P_inv_hat
+        return y_real
     end
-    P = LinearMap((y, x) -> prec_func!(y, x, conf), conf.spe_len; ismutating=true)
+    P_inv = LinearMap{Float64}((y, x) -> prec_func_real!(y, x, conf), real_len; ismutating=true)
+
+    # ==========================================
+    # 求解函数封装
+    # ==========================================
+    function solve_psi(rhs_hat, conf::Config)
+        rhs_vec = reshape(rhs_hat, conf.spe_len)
+        
+        # 将复数输入转换为 Float64 Vector 喂给求解器
+        # (这里使用 Vector() 是为了兼容 Krylov 底层的 BLAS 调用，开销极小)
+        rhs_real = Vector(reinterpret(Float64, rhs_vec))
+        
+        # 注意：使用 x0 作为初始猜测，大大减少迭代次数
+        sol_real, stats = bicgstab(A_psi, rhs_real; M=P_inv, atol=1e-14, rtol=conf.tol, itmax=50, history=true)
+        if stats.solved
+            @info "BiCGSTAB 收敛: $(stats.status). 迭代了 $(stats.niter) 次，最终残差: $(stats.residuals[end])"
+        else
+            @warn "BiCGSTAB 未收敛: $(stats.status). 迭代了 $(stats.niter) 次，最终残差: $(stats.residuals[end])"
+        end
+    
+        # 将求解得出的实数数组重新翻译回避复数数组
+        sol_complex = reinterpret(ComplexF64, sol_real)
+        return reshape(sol_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
+    end
 
     # --- 开始分步求解 (11, 12, 13, 14, 21, ...) ---
     
     # 初始化结果容器 (NamedTuple)
     res = Dict{Symbol, Any}()
-
-    # 求解函数封装
-    function solve_psi(rhs_hat, conf::Config)
-        rhs_vec = reshape(rhs_hat, conf.spe_len)
-        sol_hat, stats = bicgstab(A_psi, rhs_vec; M=P, atol=0.0, rtol=conf.tol, itmax=50)
-        !stats.solved && @warn "BiCGSTAB 未收敛: $(stats.status)"
-        return reshape(sol_hat, conf.Nx÷2 + 1, conf.Ny, conf.N)
-    end
 
     # 11: 历史项
     rhs_phi_11 = @. -(b * present.phi_hat + c * old.phi_hat) / dt
@@ -88,7 +111,7 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
     res[:nu_11_np1_hat] = L_psi .* res[:psi_11_np1_hat]
 
     # 12: H1/G 项
-    H1_star_hat = to_spectral!(ops.temp_comp1, get_H1(phi_star, ops, conf), ops)
+    H1_star_hat = to_spectral!(ops.temp_comp1, get_H1(phi_star, ops, conf, A0), ops)
     rhs_phi_12 = @. -conf.M_phi * H1_star_hat
     res[:phi_12_np1_hat] = rhs_phi_12 ./ lhs_phi
     res[:mu_12_np1_hat]  = L_phi .* res[:phi_12_np1_hat] .+ H1_star_hat
@@ -161,7 +184,7 @@ function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf:
     psi_star = @. 2.0 * psi_n - psi_nm1
 
     # 获取物理空间的变分导数
-    H1_star = get_H1(phi_star, ops, conf)
+    H1_star = get_H1(phi_star, ops, conf, present.A0)
     H2_star = get_H2(phi_star, ops, conf)
     H3_star = get_H3(phi_star, psi_star, conf)
     G_star  = get_MG(phi_star, psi_star, conf)

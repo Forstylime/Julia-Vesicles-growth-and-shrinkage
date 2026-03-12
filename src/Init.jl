@@ -41,21 +41,18 @@ function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
         gamma_bend  = gamma_bend,
         gamma_in    = gamma_in,
         beta_in     = 0.0,
-        psi_in      = 0.0, # 占位，后续会在实际计算中根据`n in 1:N` 调用`psi_in_v[n]`赋值
         psi_in_v    = psi_in_v,
         gamma_out   = gamma_out,
         beta_out    = 0.0,
-        psi_out     = 0.0, # 占位，后续会在实际计算中根据`n in 1:N` 调用`psi_out_v[n]`赋值
         psi_out_v   = psi_out_v,
         lamda      = 1.0,
         S1 = S1, S2 = S2, S3 = S3, S4 = S4,
         C1 = 1.0, C2 = 5.0e5, C3 = 4.0e4,
         dt = dt, T = T,
         Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
-        tol  = 1e-12,
-        goal = goal,
-        A0   = zeros(Float64, N),  # 占位，后续由 set_A 更新
-    )
+        tol  = 1e-10,
+        goal = goal
+)
 end
 
 """
@@ -135,36 +132,6 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         phi, phi_hat, psi, psi_hat,
         u, u_hat, p, p_hat,
         mu, mu_hat, nu, nu_hat,
-        1.0, 1.0, 1.0, 1.0    # Q, R1, R2, R3
-    )
-end
-
-"""
-第二阶段：用计算所得真实面积 A 重建 Config
-"""
-function set_A(conf::Config, A::Vector{Float64})
-    return Config(
-        N          = conf.N,
-        epsilon    = conf.epsilon,
-        M_phi      = conf.M_phi,
-        M0_psi     = conf.M0_psi,
-        eta        = conf.eta,
-        gamma_surf = conf.gamma_surf,
-        gamma_area = conf.gamma_area,
-        gamma_bend = conf.gamma_bend,
-        gamma_in   = conf.gamma_in,
-        beta_in    = conf.beta_in,
-        psi_in     = conf.psi_in,
-        gamma_out  = conf.gamma_out,
-        beta_out   = conf.beta_out,
-        psi_out    = conf.psi_out,
-        lamda     = conf.lamda,
-        S1 = conf.S1, S2 = conf.S2, S3 = conf.S3, S4 = conf.S4,
-        C1 = conf.C1, C2 = conf.C2, C3 = conf.C3,
-        dt = conf.dt, T = conf.T,
-        Nx = conf.Nx, Ny = conf.Ny, Lx = conf.Lx, Ly = conf.Ly,
-        tol  = conf.tol,
-        goal = conf.goal,
-        A0   = A    # 真实值
+        1.0, 1.0, 1.0, 1.0, [0.0]     # Q, R1, R2, R3, A0
     )
 end

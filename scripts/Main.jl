@@ -32,11 +32,11 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     present = generate_initial_condition(conf, ops, state_type)
 
     # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
-    A_n = calculate_area(present.phi, ops, conf)
-    conf.A0 = A_n
+    A_0 = calculate_area(present.phi, ops, conf)
+    present.A0 = A_0  # 将初始面积目标存入状态变量
 
     # 初始化 SAV 变量
-    present.R1 = sqrt(get_W1(present.phi, ops, conf) + conf.C1)
+    present.R1 = sqrt(get_W1(present.phi, ops, conf, A_0) + conf.C1)
     present.R2 = sqrt(get_W2(present.phi, ops, conf) + conf.C2)
     present.R3 = sqrt(get_W3(present.phi, present.psi, conf) + conf.C3)
     present.Q  = 1.0
@@ -44,7 +44,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     # 计算初始化学势
     L_phi = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
 
-    H1 = get_H1(present.phi, ops, conf)
+    H1 = get_H1(present.phi, ops, conf, A_0)
     H2 = get_H2(present.phi, ops, conf)
     H3 = get_H3(present.phi, present.psi, conf)
     G  = get_MG(present.phi, present.psi, conf)
@@ -66,7 +66,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     energy_history    = Float64[]
     save_interval     = max(1, conf.Nt ÷ save_frames)
 
-    @info "仿真开始。初始 Q = $(present.Q)，初始面积 = $(conf.A0)"
+    @info "仿真开始。初始 Q = $(present.Q)，初始面积 = $(present.A0)"
 
     # ── 4. 时间推进循环 ──────────────────────────────────────────
     p_meter = Progress(conf.Nt, 1, "Computing...")
@@ -166,4 +166,5 @@ end
 
 
 ## ── 入口 ──────────────────────────────────────────────────────
+println("开始仿真...")
 run_simulation(0.000001, 0.0001, 1)

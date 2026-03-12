@@ -89,18 +89,30 @@ function build_operators(cfg::Config)
     tmp_complex_2 = zeros(ComplexF64, Nx÷2+1, Ny, 2)
 
     fft_plan  = plan_rfft(tmp_real,         (1, 2); flags=FFTW.MEASURE)
-    ifft_plan = plan_irfft(tmp_complex, Nx, (1, 2); flags=FFTW.MEASURE)
+    # 创建 plan 时加上 FFTW.PRESERVE_INPUT
+    ifft_plan = plan_irfft(
+        tmp_complex, 
+        Nx, 
+        (1, 2); 
+        flags = FFTW.MEASURE
+)
     fft_plan_1  = plan_rfft(tmp_real_1,         (1, 2); flags=FFTW.MEASURE)
     ifft_plan_1 = plan_irfft(tmp_complex_1, Nx, (1, 2); flags=FFTW.MEASURE)
     fft_plan_2  = plan_rfft(tmp_real_2,         (1, 2); flags=FFTW.MEASURE)
     ifft_plan_2 = plan_irfft(tmp_complex_2, Nx, (1, 2); flags=FFTW.MEASURE)
 
-    temp_real1 = tmp_real
-    temp_real2 = tmp_real
-    temp_real3 = tmp_real
-    temp_comp1 = tmp_complex
-    temp_comp2 = tmp_complex
-    temp_comp3 = tmp_complex
+    inv_s = 1.0 / (Nx * Ny)
+
+    # ----------------------------------------------------------
+    # 5. Temporary buffers for spectral-physical transforms and multiplications
+    # ----------------------------------------------------------
+    temp_real1 = zeros(Float64, Nx, Ny, N)          # for physical fields
+    temp_real2 = zeros(Float64, Nx, Ny, N)          # for physical fields
+    temp_real3 = zeros(Float64, Nx, Ny, N)          # for physical fields
+    temp_comp1 = zeros(ComplexF64, Nx÷2+1, Ny, N)  # for spectral fields
+    temp_comp2 = zeros(ComplexF64, Nx÷2+1, Ny, N)  # for spectral fields
+    temp_comp3 = zeros(ComplexF64, Nx÷2+1, Ny, N)  # for spectral fields
+    temp_complex_irfft = zeros(ComplexF64, Nx÷2+1, Ny, N)  # for in-place irfft
 
     return Operators(
     K, D1,                          # NTuple, NTuple
@@ -109,9 +121,11 @@ function build_operators(cfg::Config)
     fft_plan_1,  ifft_plan_1,
     fft_plan_2,  ifft_plan_2,
     Nx, Ny,                          # Int, Int
+    inv_s,     # Float64
     temp_real1, temp_real2, temp_real3,
-    temp_comp1, temp_comp2, temp_comp3
-)
+    temp_comp1, temp_comp2, temp_comp3,
+    temp_complex_irfft
+    )
 end
 
 
@@ -139,7 +153,8 @@ In-place inverse transform: spectral field `u_hat` ((Nx÷2+1)×Ny)
 Writes result into pre-allocated `u`.
 """
 @inline function to_physical!(buffer::AbstractArray{Float64}, u_hat::AbstractArray{ComplexF64}, ops::Operators)
-    mul!(buffer, ops.ifft_plan, u_hat)  # in-place transform
+    copyto!(ops.temp_complex_irfft, u_hat) # 单独的 buffer 用于 irfft，避免覆盖输入 u_hat
+    mul!(buffer, ops.ifft_plan, ops.temp_complex_irfft)  # in-place transform
     return buffer
 end
 
@@ -151,22 +166,14 @@ end
 """
 谱系数点乘函数，不用去混叠
 """
-function mult!(
-    buffer::AbstractMatrix{ComplexF64},
-    u_hat::AbstractMatrix{ComplexF64},
-    v_hat::AbstractMatrix{ComplexF64},
-    ops::Operators
-)
+function mult!(buffer::AbstractArray{ComplexF64}, u_hat::AbstractArray{ComplexF64}, v_hat::AbstractArray{ComplexF64}, ops::Operators)
 
-    Nx = ops.Nx
-    Ny = ops.Ny
+    u = to_physical!(ops.temp_real1, u_hat, ops)
+    v = to_physical!(ops.temp_real2, v_hat, ops)
 
-    u = to_physical!(ops.temp_real1,u_hat,ops)
-    v = to_physical!(ops.temp_real2,v_hat,ops)
+    w = u .* v
 
-    ops.temp_real3 .= u .* v
-
-    to_spectral!(buffer, ops.temp_real3, ops)
-
+    # 变回频域
+    to_spectral!(buffer, w, ops)
     return buffer
 end

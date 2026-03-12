@@ -26,7 +26,7 @@ Physical parameters use their standard symbol names from the paper.
 Rename `A` → `area_target` to avoid collision with the matrix variable A
 used throughout the solver steps.
 """
-mutable struct Config
+struct Config
     # --- Physical parameters ---
     N             :: Int          # number of phase fields (N=1 for single SAV)
     epsilon       :: Float64
@@ -38,11 +38,9 @@ mutable struct Config
     gamma_bend    :: Float64
     gamma_in      :: Int
     beta_in       :: Int
-    psi_in        :: Float64
     psi_in_v      :: Vector{Float64}
     gamma_out     :: Int
     beta_out      :: Int
-    psi_out       :: Float64
     psi_out_v     :: Vector{Float64}
     lamda         :: Int
 
@@ -74,9 +72,6 @@ mutable struct Config
     tol  :: Float64
     goal :: Symbol
 
-    # --- Physical constraint target ---
-    # Renamed from `A0` to avoid collision with matrix variable A in solvers
-    A0 :: Vector{Float64}
     spe_len :: Int
 end
 
@@ -109,13 +104,13 @@ function Config(;
         N,
         epsilon, M_phi, M0_psi, eta,
         gamma_surf, gamma_area, gamma_bend,
-        gamma_in, beta_in, psi_in, psi_in_v,
-        gamma_out, beta_out, psi_out, psi_out_v,
+        gamma_in, beta_in, psi_in_v::Vector{Float64},
+        gamma_out, beta_out, psi_out_v::Vector{Float64},
         lamda,
         S1, S2, S3, S4,
         C1, C2, C3,
         dt, T, Nx, Ny, Lx, Ly,
-        tol, goal, A0)
+        tol, goal)
 
     Nt = round(Int, T / dt)
     dx = Lx / Nx
@@ -127,8 +122,8 @@ function Config(;
         N,
         epsilon, M_phi, M0_psi, eta,
         gamma_surf, gamma_area, gamma_bend,
-        gamma_in, beta_in, psi_in, psi_in_v,
-        gamma_out, beta_out, psi_out, psi_out_v,
+        gamma_in, beta_in, psi_in_v,
+        gamma_out, beta_out, psi_out_v,
         lamda,
         S1, S2, S3, S4,
         C1, C2, C3,
@@ -136,7 +131,6 @@ function Config(;
         Nx, Ny, Lx, Ly,
         dx, dy,
         tol, goal,
-        A0,
         spe_len
     )
 end
@@ -200,6 +194,9 @@ mutable struct FieldState
     R1 :: Float64
     R2 :: Float64
     R3 :: Float64
+
+    # --- Initial area constraint target (derived from A0) ---
+    A0 :: Vector{Float64}
 end
 
 # 定义构造函数进行预分配
@@ -227,10 +224,10 @@ function FieldState(Nx::Int, Ny::Int, N::Int)
     nu_hat  = zeros(ComplexF64, Nx_hat, Ny, N)
     
     # 初始化标量变量
-    Q, R1, R2, R3 = 0.0, 0.0, 0.0, 0.0
+    Q, R1, R2, R3, A0 = 0.0, 0.0, 0.0, 0.0, [0.0]
     
     # 返回构造好的实例
-    return FieldState(phi, phi_hat, psi, psi_hat, u, u_hat, p, p_hat, mu, mu_hat, nu, nu_hat, Q, R1, R2, R3)
+    return FieldState(phi, phi_hat, psi, psi_hat, u, u_hat, p, p_hat, mu, mu_hat, nu, nu_hat, Q, R1, R2, R3, A0)
 end
 
 """
@@ -260,7 +257,8 @@ function update_state!(dest::FieldState, src::FieldState)
     dest.R1          = src.R1
     dest.R2          = src.R2
     dest.R3          = src.R3
-    dest.area_lambda = src.area_lambda
+
+    # 注意：A0 是初始值，不随时间更新，因此不复制
 
     return dest
 end
@@ -304,12 +302,14 @@ struct Operators{P, IP}
     ifft_plan_2:: IP
     Nx         :: Int
     Ny         :: Int
-    temp_real1
-    temp_real2
-    temp_real3
-    temp_comp1
-    temp_comp2
-    temp_comp3
+    inv_s      :: Float64
+    temp_real1 :: AbstractArray{Float64}
+    temp_real2 :: AbstractArray{Float64}
+    temp_real3 :: AbstractArray{Float64}
+    temp_comp1 :: AbstractArray{ComplexF64}
+    temp_comp2 :: AbstractArray{ComplexF64}
+    temp_comp3 :: AbstractArray{ComplexF64}
+    temp_complex_irfft :: AbstractArray{ComplexF64}
 end
 
 
