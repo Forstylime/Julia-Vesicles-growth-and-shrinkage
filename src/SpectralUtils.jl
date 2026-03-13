@@ -50,9 +50,11 @@ function build_operators(cfg::Config)
     #    Shape is deliberately (Nx÷2+1, 1) and (1, Ny) for broadcasting.
     # ---------------------------------------------------------- 
     kx = convert(Matrix{Float64}, reshape(2π .* rfftfreq(Nx, Nx / Lx), :, 1))   # (Nx÷2+1) × 1
+    kx0 = convert(Matrix{Float64}, reshape(2π .* fftfreq(Nx, Nx / Lx), Nx, 1)) # full fft frequencies
     ky = convert(Matrix{Float64}, reshape(2π .* fftfreq(Ny, Ny / Ly), 1, :))    # 1 × Ny
 
     K = (kx, ky)::NTuple{2, Matrix{Float64}}  # NTuple{2}: index as K[1], K[2]
+    K0 = (kx0, ky)  # full fft frequencies
 
     # ----------------------------------------------------------
     # 2. First-derivative operators in spectral space
@@ -61,6 +63,7 @@ function build_operators(cfg::Config)
     #    spectral space (pointwise multiply, then irfft for physical space).
     # ----------------------------------------------------------
     D1 = (complex.(0.0, kx), complex.(0.0, ky))  # (i*kx, i*ky)
+    D1_full = (complex.(0.0, kx0), complex.(0.0, ky))  # full fft frequencies
 
     # ----------------------------------------------------------
     # 3. Laplacian and Biharmonic operators
@@ -69,6 +72,7 @@ function build_operators(cfg::Config)
     # ----------------------------------------------------------
     K2              = @. kx^2 + ky^2              # (Nx÷2+1) × Ny, Float64
     Laplacian       = @. -K2                      # negative semi-definite
+    Laplacian_full  = @. -(kx0^2 + ky^2)      # full fft frequencies
     Biharmonic      = @. (kx^2 + ky^2)^2          # positive semi-definite
 
     # ----------------------------------------------------------
@@ -83,23 +87,22 @@ function build_operators(cfg::Config)
     # ----------------------------------------------------------
     tmp_real    = zeros(Float64,    Nx, Ny, N)
     tmp_complex = zeros(ComplexF64, Nx÷2+1, Ny, N)
+    tmp_real0    = zeros(Float64,    Nx, Ny, N)
+    tmp_complex0 = zeros(ComplexF64, Nx, Ny, N) # for full fft/ifft plans if needed in BiCGSTAB
     tmp_real_1    = zeros(Float64,    Nx, Ny)
     tmp_complex_1 = zeros(ComplexF64, Nx÷2+1, Ny)
     tmp_real_2    = zeros(Float64,    Nx, Ny, 2)
     tmp_complex_2 = zeros(ComplexF64, Nx÷2+1, Ny, 2)
 
-    fft_plan  = plan_rfft(tmp_real,         (1, 2); flags=FFTW.MEASURE)
-    # 创建 plan 时加上 FFTW.PRESERVE_INPUT
-    ifft_plan = plan_irfft(
-        tmp_complex, 
-        Nx, 
-        (1, 2); 
-        flags = FFTW.MEASURE
-)
-    fft_plan_1  = plan_rfft(tmp_real_1,         (1, 2); flags=FFTW.MEASURE)
-    ifft_plan_1 = plan_irfft(tmp_complex_1, Nx, (1, 2); flags=FFTW.MEASURE)
-    fft_plan_2  = plan_rfft(tmp_real_2,         (1, 2); flags=FFTW.MEASURE)
-    ifft_plan_2 = plan_irfft(tmp_complex_2, Nx, (1, 2); flags=FFTW.MEASURE)
+    fft_plan  = plan_rfft(tmp_real,         (1, 2); flags=FFTW.MEASURE) # for phase fields (N components)
+    ifft_plan = plan_irfft(tmp_complex, Nx, (1, 2); flags = FFTW.MEASURE) # for phase fields (N components)
+
+    fft_plan0   = plan_fft(tmp_real0,         (1, 2); flags=FFTW.MEASURE) # full fft plan
+    ifft_plan0  = plan_ifft(tmp_complex0,     (1, 2); flags=FFTW.MEASURE) # full ifft plan
+    fft_plan_1  = plan_rfft(tmp_real_1,         (1, 2); flags=FFTW.MEASURE) # for scalar fields
+    ifft_plan_1 = plan_irfft(tmp_complex_1, Nx, (1, 2); flags=FFTW.MEASURE) # for scalar fields
+    fft_plan_2  = plan_rfft(tmp_real_2,         (1, 2); flags=FFTW.MEASURE) # for vector fields (2 components)
+    ifft_plan_2 = plan_irfft(tmp_complex_2, Nx, (1, 2); flags=FFTW.MEASURE) # for vector fields (2 components)
 
     inv_s = 1.0 / (Nx * Ny)
 
@@ -115,9 +118,10 @@ function build_operators(cfg::Config)
     temp_complex_irfft = zeros(ComplexF64, Nx÷2+1, Ny, N)  # for in-place irfft
 
     return Operators(
-    K, D1,                          # NTuple, NTuple
-    Laplacian, Biharmonic,          # Matrix, Matrix
+    K, D1, D1_full,                         # NTuple, NTuple
+    Laplacian, Laplacian_full, Biharmonic,          # Matrix, Matrix
     fft_plan,  ifft_plan,           # P,  IP   (物理网格)
+    fft_plan0, ifft_plan0,
     fft_plan_1,  ifft_plan_1,
     fft_plan_2,  ifft_plan_2,
     Nx, Ny,                          # Int, Int

@@ -33,67 +33,83 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
 
     # 5. 定义 BiCGSTAB 算子 A(psi)
     # y = (a/dt)I - div(M_psi * grad(L_psi * x))
-    real_len = 2 * conf.spe_len  # 长度翻倍
-    function A_psi_func_real!(y_real, x_real, conf::Config)
-        # 零成本转换：将输入的 Float64 数组重新解释为 ComplexF64，并在不分配新内存的情况下 reshape
-        x_complex = reinterpret(ComplexF64, x_real)
-        y_complex = reinterpret(ComplexF64, y_real)
-        
-        x_hat = reshape(x_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
-        y_hat = reshape(y_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
-        
-        # 内部计算逻辑保持原样，注意使用 @. 防止分配
-        @. ops.temp_comp1 = L_psi * x_hat 
-        grad_x = to_physical!(ops.temp_real1, @.(ops.D1[1] * ops.temp_comp1), ops) 
-        grad_y = to_physical!(ops.temp_real2, @.(ops.D1[2] * ops.temp_comp1), ops)
-
-        flux_x_hat = to_spectral!(ops.temp_comp2, @.(M_psi * grad_x), ops)
-        flux_y_hat = to_spectral!(ops.temp_comp3, @.(M_psi * grad_y), ops)
-
-        @. y_hat = (a / dt) * x_hat - (ops.D1[1] * flux_x_hat + ops.D1[2] * flux_y_hat)
-        
-        return y_real # 必须返回 y_real 满足 Krylov 的 in-place 规范
-    end
-
-    # 构建实数域上的 LinearMap
-    A_psi = LinearMap{Float64}((y, x) -> A_psi_func_real!(y, x, conf), real_len; ismutating=true)
-
-    # 预处理子也做同样的包装
-    P_inv_hat = @. 1.0 / ( (a / dt) - M_max * ops.Laplacian * L_psi )
-    function prec_func_real!(y_real, r_real, conf::Config)
-        r_complex = reinterpret(ComplexF64, r_real)
-        y_complex = reinterpret(ComplexF64, y_real)
-        
-        r_hat = reshape(r_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
-        y_hat = reshape(y_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
-        
-        # P_inv_hat 是纯实数，与复数 r_hat 点乘是合法的线性操作
-        @. y_hat = r_hat * P_inv_hat
-        return y_real
-    end
-    P_inv = LinearMap{Float64}((y, x) -> prec_func_real!(y, x, conf), real_len; ismutating=true)
-
     # ==========================================
-    # 求解函数封装
+    # 1. 内部的全频域求解器 (直接在全复数域构造和求解线性系统)
     # ==========================================
-    function solve_psi(rhs_hat, conf::Config)
-        rhs_vec = reshape(rhs_hat, conf.spe_len)
+    function solve_psi_full_complex(rhs_full, conf::Config)
+        full_len = conf.Nx * conf.Ny * conf.N
         
-        # 将复数输入转换为 Float64 Vector 喂给求解器
-        # (这里使用 Vector() 是为了兼容 Krylov 底层的 BLAS 调用，开销极小)
-        rhs_real = Vector(reinterpret(Float64, rhs_vec))
-        
-        # 注意：使用 x0 作为初始猜测，大大减少迭代次数
-        sol_real, stats = bicgstab(A_psi, rhs_real; M=P_inv, atol=1e-14, rtol=conf.tol, itmax=50, history=true)
-        if stats.solved
-            @info "BiCGSTAB 收敛: $(stats.status). 迭代了 $(stats.niter) 次，最终残差: $(stats.residuals[end])"
-        else
-            @warn "BiCGSTAB 未收敛: $(stats.status). 迭代了 $(stats.niter) 次，最终残差: $(stats.residuals[end])"
+        # 算子：使用全尺寸 fft 和 ifft
+        function A_psi_func_complex!(y_vec, x_vec)
+            x_hat = reshape(x_vec, conf.Nx, conf.Ny, conf.N)
+            y_hat = reshape(y_vec, conf.Nx, conf.Ny, conf.N)
+            
+            # L_psi * x_hat
+            temp_comp = L_psi .* x_hat 
+            
+            # 频域梯度
+            grad_x_hat = ops.D1_full[1] .* temp_comp
+            grad_y_hat = ops.D1_full[2] .* temp_comp
+            
+            # 转物理空间 (必须用 ifft)
+            grad_x_phys = ifft(grad_x_hat, (1, 2))
+            grad_y_phys = ifft(grad_y_hat, (1, 2))
+            
+            # 乘 M_psi
+            flux_x_phys = M_psi .* grad_x_phys
+            flux_y_phys = M_psi .* grad_y_phys
+            
+            # 转回频域 (必须用 fft)
+            flux_x_hat = fft(flux_x_phys, (1, 2))
+            flux_y_hat = fft(flux_y_phys, (1, 2))
+            
+            # 组装最终结果
+            @. y_hat = (a / dt) * x_hat - (ops.D1_full[1] * flux_x_hat + ops.D1_full[2] * flux_y_hat)
+            return y_vec
         end
-    
-        # 将求解得出的实数数组重新翻译回避复数数组
-        sol_complex = reinterpret(ComplexF64, sol_real)
-        return reshape(sol_complex, conf.Nx÷2 + 1, conf.Ny, conf.N)
+
+        A_psi = LinearMap{ComplexF64}(A_psi_func_complex!, full_len; ismutating=true)
+
+        # 预处理子 (注意：P_inv_hat 需要是全尺寸 Nx × Ny 的)
+        # 如果你外部传进来的 P_inv_hat 是一半大小，你需要在这里重新计算全尺寸的
+        P_inv_hat_full = @. 1.0 / ( (a / dt) - M_max * ops.Laplacian_full * L_psi ) 
+        
+        function prec_func_complex!(y_vec, r_vec)
+            r_hat = reshape(r_vec, conf.Nx, conf.Ny, conf.N)
+            y_hat = reshape(y_vec, conf.Nx, conf.Ny, conf.N)
+            @. y_hat = r_hat * P_inv_hat_full
+            return y_vec
+        end
+        P_inv = LinearMap{ComplexF64}(prec_func_complex!, full_len; ismutating=true)
+
+        # 在全复数域求解
+        rhs_vec = reshape(rhs_full, full_len)
+        sol_vec, stats = bicgstab(A_psi, rhs_vec; M=P_inv, atol=1e-14, rtol=conf.tol, itmax=20, history=true)
+        
+        # 检查收敛性, 如果不收敛，输出警告信息
+        !stats.solved && @warn "BiCGSTAB did not converge within the maximum iterations. Final residual: $(stats.resnorm)"
+
+        return reshape(sol_vec, conf.Nx, conf.Ny, conf.N)
+    end
+
+
+    # ==========================================
+    # 2. 外部包装器 (处理 rfft 的桥接)
+    # ==========================================
+    function solve_psi(rhs_rhat, conf::Config)
+        # 步骤 A: 将一半大小的 rhs_rhat "无损补全" 为全尺寸复数 rhs_full
+        # 巧妙利用 irfft -> fft，自动生成严格共轭对称的全频谱，省去手动 pad 的烦恼！
+        rhs_phys = irfft(rhs_rhat, conf.Nx, (1, 2)) 
+        rhs_full = fft(rhs_phys, (1, 2))
+        
+        # 步骤 B: 调用全复数域求解器，获得全尺寸复数解
+        sol_full = solve_psi_full_complex(rhs_full, conf)
+        
+        # 步骤 C: 截断回一半大小，完美适配外部的 rfft 生态
+        # 傅里叶谱的正半轴对应前 (Nx ÷ 2 + 1) 个元素
+        sol_rhat = sol_full[1:(conf.Nx ÷ 2 + 1), :, :]
+        
+        return sol_rhat
     end
 
     # --- 开始分步求解 (11, 12, 13, 14, 21, ...) ---

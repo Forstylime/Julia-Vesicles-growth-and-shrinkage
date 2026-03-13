@@ -292,10 +292,14 @@ Type parameters are inferred by build_operators(); never set manually.
 struct Operators{P, IP}
     K          :: NTuple{2, Matrix{Float64}}
     D1         :: NTuple{2, Matrix{ComplexF64}}
+    D1_full    :: NTuple{2, Matrix{ComplexF64}} # full fft frequencies
     Laplacian  :: Matrix{Float64}
+    Laplacian_full :: Matrix{Float64} # full fft frequencies for dealiasing
     Biharmonic :: Matrix{Float64}
     fft_plan   :: P
     ifft_plan  :: IP
+    fft_plan0
+    ifft_plan0
     fft_plan_1
     ifft_plan_1
     fft_plan_2 :: P

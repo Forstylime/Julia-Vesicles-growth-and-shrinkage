@@ -50,7 +50,7 @@ function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
         C1 = 1.0, C2 = 5.0e5, C3 = 4.0e4,
         dt = dt, T = T,
         Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
-        tol  = 1e-10,
+        tol  = 1e-12,
         goal = goal
 )
 end

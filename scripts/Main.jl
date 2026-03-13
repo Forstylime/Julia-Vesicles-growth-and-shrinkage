@@ -1,20 +1,22 @@
 # File: Main.jl
-println("加载模块...\n")
 
+println("=============================================")
+println("加载依赖库...\n")
 using FFTW
 using LinearAlgebra
 using Printf
 using ProgressMeter
 using CairoMakie
 #using IterativeSolvers
-
+println("依赖库加载完成。\n")
+println("-------------------------------------")
+println("加载模块...\n")
 include("../src/Types.jl")
 include("../src/SpectralUtils.jl")
 include("../src/Utils.jl")
 include("../src/Solvers.jl")
 include("../src/Init.jl")
-
-println("模块加载完成。开始仿真...")
+println("模块加载完成.\n")
 
 ## simulation function
 function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
@@ -125,43 +127,6 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     end
 
     return present, energy_history
-end
-
-## ────────────────────────────────────────────────────────────────
-# 辅助函数
-"""
-function copy_fieldstate!(dest::FieldState, src::FieldState)
-    for f in (:phi, :phi_hat, :psi, :psi_hat,
-              :u, :u_hat, :p, :p_hat,
-              :mu, :mu_hat, :nu, :nu_hat)
-        getfield(dest, f) .= getfield(src, f)
-    end
-    dest.Q  = src.Q
-    dest.R1 = src.R1
-    dest.R2 = src.R2
-    dest.R3 = src.R3
-    dest.A  = src.A    # 修正：补全 A 字段
-end
-"""
-function save_visualization(state::FieldState, conf::Config, t::Float64, path::String)
-    fig = Figure(size = (1200, 1000), backgroundcolor = :white)  # 修正：size
-    ax  = Axis(fig[1, 1], aspect=DataAspect(),
-               title=@sprintf("t = %.3f", t))
-
-    hm = heatmap!(ax, state.phi, colormap=:viridis, colorrange=(-1.0, 1.0))
-    Colorbar(fig[1, 2], hm)
-
-    stride = 8
-    xs = 1:stride:conf.Nx
-    ys = 1:stride:conf.Ny
-    arrows!(ax,
-            vec([i for i in xs, j in ys]),
-            vec([j for i in xs, j in ys]),
-            vec(state.u[xs, ys, 1]),
-            vec(state.u[xs, ys, 2]),
-            arrowsize=10, lengthscale=10.0, color=:black)
-
-    save(joinpath(path, @sprintf("phi_vel_%.3f.png", t)), fig)
 end
 
 
