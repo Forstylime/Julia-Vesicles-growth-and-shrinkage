@@ -85,7 +85,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
 
     for n in 1:N
         cx_n, cy_n = cx[n], cy[n]
-        if state_type == 1  # 单圆球
+        if state_type == 1  # 单个椭圆
             R      = 0.2 * Lx
             dist   = @. sqrt((X - cx_n)^2 / 2 + (Y - cy_n)^2)
             phi[:, :, n] .= @. tanh((R - dist) / (sqrt(2) * epsilon))

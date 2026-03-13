@@ -104,17 +104,17 @@ function compute_modified_energy(present::FieldState, old::FieldState,
               0.25 * integrate_sq(@.(2 * present.u - old.u), conf)
 
     # 2. 压力伪能量
-    grad_p_x = ops.ifft_plan * (ops.D1[1] .* present.p_hat)
-    grad_p_y = ops.ifft_plan * (ops.D1[2] .* present.p_hat)
+    grad_p_x = ops.ifft_plan_1 * (ops.D1[1] .* present.p_hat)
+    grad_p_y = ops.ifft_plan_1 * (ops.D1[2] .* present.p_hat)
     pressure = (conf.dt^2 / 3.0) * (integrate_sq(grad_p_x, conf) +
                                      integrate_sq(grad_p_y, conf))
 
-    # 3. SAV 标量能量
-    sav_energy(r_new, r_old) = 0.25 * r_new^2 + 0.25 * (2r_new - r_old)^2
-    R_energy = sav_energy(present.R1, old.R1) +
-               sav_energy(present.R2, old.R2) +
-               sav_energy(present.R3, old.R3)
-    Q_energy = 0.5 * sav_energy(present.Q, old.Q)
+    # 3. SAV 标量能量 和 Q 标量能量
+    scale_energy(r_new, r_old) = 0.5 * r_new^2 + 0.5 * (2r_new - r_old)^2
+    R_energy = scale_energy(present.R1, old.R1) +
+               scale_energy(present.R2, old.R2) +
+               scale_energy(present.R3, old.R3)
+    Q_energy = 0.5 * scale_energy(present.Q, old.Q)
 
     # 4. 线性算子稳定项
     phi_star     = @. 2 * present.phi - old.phi
@@ -194,8 +194,9 @@ function get_W3(phi, psi, conf::Config)
 end
 
 # ----------------------------------------------------------------
-# 变分导数 H1, H2, H3, MG，这里分别计算各个囊泡对应的变分导数，不求和，
+# 变分导数 H1, H2, H3, MG，这里分别计算各个囊泡对应的变分导数，不合并，
 # 因此返回的数组结构与 phi, psi 相同。由于第三个维度是囊泡索引，这里H_i的第三维也是变分导数索引，和囊泡索引对应。
+# 输入和返回都是实空间的
 # ----------------------------------------------------------------
 
 function get_H1(phi::Array{Float64, 3}, ops::Operators, conf::Config, A0::Vector{Float64})

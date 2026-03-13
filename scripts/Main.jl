@@ -99,13 +99,12 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         present.p_hat   .= step7_res.p_hat
 
         # 实空间（用 view 避免切片分配）
-        present.phi .= real(ops.ifft_plan * present.phi_hat)
-        present.psi .= real(ops.ifft_plan * present.psi_hat)
-        present.mu  .= real(ops.ifft_plan * present.mu_hat)
-        present.nu  .= real(ops.ifft_plan * present.nu_hat)
-        present.p   .= real(ops.ifft_plan * present.p_hat)
-        @views present.u[:,:,1] .= real(ops.ifft_plan * present.u_hat[:,:,1])
-        @views present.u[:,:,2] .= real(ops.ifft_plan * present.u_hat[:,:,2])
+        to_physical!(present.phi, present.phi_hat, ops)
+        to_physical!(present.psi, present.psi_hat, ops)
+        to_physical!(present.mu, present.mu_hat, ops)
+        to_physical!(present.nu, present.nu_hat, ops)
+        present.p .= ops.ifft_plan_1 * present.p_hat
+        present.u .= ops.ifft_plan_2 * present.u_hat
 
         # 标量
         present.R1 = step6_res.R1
@@ -116,14 +115,17 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         # ── 监控 ──
         push!(energy_history, compute_modified_energy(present, old, ops, conf))
 
+        """
+        # 可视化以及数据保存
         if n % save_interval == 0
             t = n * conf.dt
-            save_visualization(present, conf, t, save_path)
-            @info @sprintf("Step %d / %d  t = %.4f  E = %.6e",
+            #save_visualization(present, conf, t, save_path)
+            @info @sprintf("Step %d / %d  t = %.5f  E = %.6e",
                            n, conf.Nt, t, last(energy_history))
         end
+        """
 
-        next!(p_meter)
+        next!(p_meter) # 更新进度条
     end
 
     return present, energy_history
@@ -132,4 +134,4 @@ end
 
 ## ── 入口 ──────────────────────────────────────────────────────
 println("开始仿真...")
-run_simulation(0.000001, 0.0001, 1)
+results = run_simulation(0.000001, 0.001, 1);

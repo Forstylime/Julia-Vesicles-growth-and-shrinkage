@@ -207,6 +207,7 @@ function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf:
 
     # 2. 积分辅助函数: int_dot(A, B) = sum(A .* B) * dx * dy
     # 使用 Julia 内置 dot 更高效
+    # 这里的积分是全域的求和，即包含所有囊泡。
     int_dot(A, B) = dot(A, B) * dx * dy
 
     # 3. 计算中间标量 U1, U2, U3
@@ -355,21 +356,21 @@ function solve_step4(present::FieldState, old::FieldState, ops::Operators, conf:
 
     # 3. 计算 RHS 1 (历史项 + 压力梯度)
     # rhs_1 = -(b*u_n + c*u_nm1)/dt - grad(p_n)
-    rhs_1_hat = zeros(ComplexF64, Nx, Ny, 2)
+    rhs_1_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
     for d in 1:2
-        @. rhs_1_hat[:, :, d] = -(b * present.u_hat[:, :, d] + c * old.u_hat[:, :, d]) / dt - 
-                                 (ops.D1[d] * present.p_hat)
+        rhs_1_hat[:, :, d] = -(b * present.u_hat[:, :, d] + c * old.u_hat[:, :, d]) / dt .- 
+                                 (ops.D1[d] .* present.p_hat)
     end
 
     # 4. 计算非线性项 (Convective & Coupling)
     # 我们需要先算出梯度项的物理空间表示
     
-    # --- 对流项: (u* · grad) u* ---
+    # --- 对流项: (u* · grad) u* = (u_x .* dx + u_y .* dy) .* [u_x, u_y] ---
     # grad_ux = [dux/dx, dux/dy], grad_uy = [duy/dx, duy/dy]
-    dux_dx = real(ops.ifft_plan * (ops.D1[1] .* u_star_hat[:, :, 1]))
-    dux_dy = real(ops.ifft_plan * (ops.D1[2] .* u_star_hat[:, :, 1]))
-    duy_dx = real(ops.ifft_plan * (ops.D1[1] .* u_star_hat[:, :, 2]))
-    duy_dy = real(ops.ifft_plan * (ops.D1[2] .* u_star_hat[:, :, 2]))
+    dux_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:, :, 1]))
+    dux_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:, :, 1]))
+    duy_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:, :, 2]))
+    duy_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:, :, 2]))
 
     conv_x = @. u_star[:, :, 1] * dux_dx + u_star[:, :, 2] * dux_dy
     conv_y = @. u_star[:, :, 1] * duy_dx + u_star[:, :, 2] * duy_dy
@@ -388,15 +389,15 @@ function solve_step4(present::FieldState, old::FieldState, ops::Operators, conf:
     coupl_y = @. phi_star * dmu_dy + psi_star * dnu_dy
 
     # 5. 构造 RHS 2 (谱空间)
-    rhs_2_hat = zeros(ComplexF64, Nx, Ny, 2)
-    # 注意：Julia 的 fft_plan 可以直接作用于 2D 矩阵
-    rhs_2_hat[:, :, 1] = ops.fft_plan * (-conv_x .- lamda .* coupl_x)
-    rhs_2_hat[:, :, 2] = ops.fft_plan * (-conv_y .- lamda .* coupl_y)
+    rhs_2_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
+    # 注意：fft_plan_1 是针对二维矩阵数据的
+    rhs_2_hat[:, :, 1] = ops.fft_plan_1 * (-conv_x .- lamda .* dropdims(sum(coupl_x, dims=3), dims=3))
+    rhs_2_hat[:, :, 2] = ops.fft_plan_1 * (-conv_y .- lamda .* dropdims(sum(coupl_y, dims=3), dims=3))
 
     # 6. 求解 (谱空间除法) 并转回物理空间
-    u_tilde_1_hat = zeros(ComplexF64, Nx, Ny, 2)
-    u_tilde_2_hat = zeros(ComplexF64, Nx, Ny, 2)
-    
+    u_tilde_1_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
+    u_tilde_2_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
+
     for d in 1:2
         @. u_tilde_1_hat[:, :, d] = rhs_1_hat[:, :, d] / lhs
         @. u_tilde_2_hat[:, :, d] = rhs_2_hat[:, :, d] / lhs
@@ -406,10 +407,8 @@ function solve_step4(present::FieldState, old::FieldState, ops::Operators, conf:
     u_tilde_1 = zeros(Float64, Nx, Ny, 2)
     u_tilde_2 = zeros(Float64, Nx, Ny, 2)
     
-    for d in 1:2
-        u_tilde_1[:, :, d] .= real(ops.ifft_plan * u_tilde_1_hat[:, :, d])
-        u_tilde_2[:, :, d] .= real(ops.ifft_plan * u_tilde_2_hat[:, :, d])
-    end
+    u_tilde_1 .= real(ops.ifft_plan_2 * u_tilde_1_hat)
+    u_tilde_2 .= real(ops.ifft_plan_2 * u_tilde_2_hat)
 
     return (
         u_tilde_1_hat = u_tilde_1_hat,
@@ -454,10 +453,10 @@ function solve_step5(present::FieldState, old::FieldState, ops::Operators, conf:
 
     # 3. 计算对流项: (u* · grad) u*
     # u_star_hat 的梯度
-    dux_dx = real(ops.ifft_plan * (ops.D1[1] .* u_star_hat[:,:,1]))
-    dux_dy = real(ops.ifft_plan * (ops.D1[2] .* u_star_hat[:,:,1]))
-    duy_dx = real(ops.ifft_plan * (ops.D1[1] .* u_star_hat[:,:,2]))
-    duy_dy = real(ops.ifft_plan * (ops.D1[2] .* u_star_hat[:,:,2]))
+    dux_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:,:,1]))
+    dux_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:,:,1]))
+    duy_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:,:,2]))
+    duy_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:,:,2]))
     
     conv_x = @. u_star[:,:,1] * dux_dx + u_star[:,:,2] * dux_dy
     conv_y = @. u_star[:,:,1] * duy_dx + u_star[:,:,2] * duy_dy
@@ -476,32 +475,23 @@ function solve_step5(present::FieldState, old::FieldState, ops::Operators, conf:
     t11 = dot(@.(u_star[:,:,1] * grad_phi_star_x + u_star[:,:,2] * grad_phi_star_y), mu_1)
     # theta_12 = (u* · grad psi*) * nu_1
     t12 = dot(@.(u_star[:,:,1] * grad_psi_star_x + u_star[:,:,2] * grad_psi_star_y), nu_1)
-    # theta_13 = phi* (grad mu* · u_tilde_1) + psi* (grad nu* · u_tilde_1)
+    # theta_13 = ∑_(phi·grad mu + psi·grad nu, dim=3) · u_tilde_1
     phi_star = @. 2.0 * present.phi - old.phi
-    psi_star = @. 2.0 * present.psi - old.psi
-    # t13 = dot(@.(phi_star * (grad_mu_star_x * u_tilde_1[:,:,1] + grad_mu_star_y * u_tilde_1[:,:,2]) + 
-    #              psi_star * (grad_nu_star_x * u_tilde_1[:,:,1] + grad_nu_star_y * u_tilde_1[:,:,2])), 1.0) # 这里的1.0表示直接对全阵求和
-    # 或者写成：
-    # t13 = dot(@.(phi_star * (grad_mu_star_x * u_tilde_1[:,:,1] + grad_mu_star_y * u_tilde_1[:,:,2])), 1.0) +
-    #       dot(@.(psi_star * (grad_nu_star_x * u_tilde_1[:,:,1] + grad_nu_star_y * u_tilde_1[:,:,2])), 1.0)
-    # t13 = dot(@.(phi_star * (...)), 1.0) ❌ 错误！
-    # LinearAlgebra.dot(A, B) 要求两个参数都是同维度数组。
-    # dot(array, 1.0) 在Julia中不会求和，而是会报错或产生错误结果。
-    # 求数组所有元素之和应使用：
-    t13 = sum(@.(phi_star * (grad_mu_star_x * u_tilde_1[:,:,1] + grad_mu_star_y * u_tilde_1[:,:,2]))) + 
-      sum(@.(psi_star * (grad_nu_star_x * u_tilde_1[:,:,1] + grad_nu_star_y * u_tilde_1[:,:,2])))
+    psi_star = @. 2.0 * present.psi - old.psi 
+    t3_sub_x = phi_star .* grad_mu_star_x + psi_star .* grad_nu_star_x
+    t3_sub_y = phi_star .* grad_mu_star_y + psi_star .* grad_nu_star_y
+    t13 = dot(sum(t3_sub_x, dims=3), u_tilde_1[:,:,1]) + dot(sum(t3_sub_y, dims=3), u_tilde_1[:,:,2])
 
     # theta_14 = conv · u_tilde_1
     t14 = dot(conv_x, u_tilde_1[:,:,1]) + dot(conv_y, u_tilde_1[:,:,2])
 
+    # t11,t12,t13是张量求和形成的标量，t14是矩阵计算得出的标量，直接求和在积分会因为t14的自动广播而被重复计算，应该分别计算积分
     theta_1 = dx * dy * (lamda * (t11 + t12 + t13) + t14)
 
     # 6. 计算 theta_2 (分量与 theta_1 对应，但使用 index '2')
     t21 = dot(@.(u_star[:,:,1] * grad_phi_star_x + u_star[:,:,2] * grad_phi_star_y), mu_2)
     t22 = dot(@.(u_star[:,:,1] * grad_psi_star_x + u_star[:,:,2] * grad_psi_star_y), nu_2)
-    # `t23`也有和`t13`同样的问题，已修复为如下：
-    t23 = sum(@.(phi_star * (grad_mu_star_x * u_tilde_2[:,:,1] + grad_mu_star_y * u_tilde_2[:,:,2]))) + 
-      sum(@.(psi_star * (grad_nu_star_x * u_tilde_2[:,:,1] + grad_nu_star_y * u_tilde_2[:,:,2])))
+    t23 = dot(sum(t3_sub_x, dims=3), u_tilde_2[:,:,1]) + dot(sum(t3_sub_y, dims=3), u_tilde_2[:,:,2])
     t24 = dot(conv_x, u_tilde_2[:,:,1]) + dot(conv_y, u_tilde_2[:,:,2])
 
     theta_2 = dx * dy * (lamda * (t21 + t22 + t23) + t24)
@@ -561,18 +551,20 @@ function solve_step7(present::FieldState, ops::Operators, conf::Config, step6_re
     # Equation: Δ (p_std_hat - p_n_hat) = (a/dt) * div(u_tilde)_hat
     
     # 处理 Laplacian 在频率 (0,0) 处的奇异性 (Laplacian[1,1] = 0)
-    delta_p_hat = zeros(ComplexF64, Nx, Ny)
-    for j in 1:Ny, i in 1:Nx
-        if i == 1 && j == 1
-            delta_p_hat[i,j] = 0.0im
-        else
-            delta_p_hat[i,j] = (a/dt) * div_u_tilde_hat[i,j] / ops.Laplacian[i,j]
-        end
-    end
+    delta_p_hat = Matrix{ComplexF64}(undef, Nx÷2+1, Ny) 
+
+    # 提取常量因子，避免在循环中重复计算除法
+    factor = a / dt
+
+    # 使用 @. 宏进行纯原地的广播计算（零分配、自动启用 SIMD）
+    @. delta_p_hat = factor * div_u_tilde_hat / ops.Laplacian
+
+    # 事后单独修复零频率处的奇异性
+    delta_p_hat[1, 1] = 0.0im
 
     # 3. 速度修正
     # u^{n+1}_hat = u_tilde_hat - (dt/a) * grad(p_std - p_n)
-    u_np1_hat = zeros(ComplexF64, Nx, Ny, 2)
+    u_np1_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
     for d in 1:2
         @. u_np1_hat[:, :, d] = step6_res.u_tilde_hat[:, :, d] - (dt / a) * ops.D1[d] * delta_p_hat
     end
