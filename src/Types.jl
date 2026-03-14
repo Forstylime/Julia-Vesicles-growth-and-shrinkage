@@ -291,31 +291,96 @@ the correct shape for all `*_hat` fields in FieldState.
 Type parameters are inferred by build_operators(); never set manually.
   P, IP:    rfft/irfft plan types for the Nx×Ny physical grid
 """
-struct Operators{P, IP}
-    K          :: NTuple{2, Matrix{Float64}}
-    D1         :: NTuple{2, Matrix{ComplexF64}}
-    D1_full    :: NTuple{2, Matrix{ComplexF64}} # full fft frequencies
-    Laplacian  :: Matrix{Float64}
-    Laplacian_full :: Matrix{Float64} # full fft frequencies for dealiasing
-    Biharmonic :: Matrix{Float64}
-    fft_plan   :: P # gobal plan
-    ifft_plan  :: IP # gobal plan
-    fft_plan0        # full size
-    ifft_plan0       # full size
-    fft_plan_1       
-    ifft_plan_1
-    fft_plan_2 :: P
-    ifft_plan_2:: IP
-    Nx         :: Int
-    Ny         :: Int
-    inv_s      :: Float64
-    temp_real1 :: AbstractArray{Float64}
-    temp_real2 :: AbstractArray{Float64}
-    temp_real3 :: AbstractArray{Float64}
-    temp_comp1 :: AbstractArray{ComplexF64}
-    temp_comp2 :: AbstractArray{ComplexF64}
-    temp_comp3 :: AbstractArray{ComplexF64}
-    temp_complex_irfft :: AbstractArray{ComplexF64}
+# src/Types.jl
+# 修改 Operators struct，将 AbstractArray 改为 Array，并添加全尺寸 FFT plan 和 matvec 缓冲区
+
+struct Operators{P, IP, PF, IPF}   # 新增 PF, IPF 两个类型参数
+    K              :: NTuple{2, Matrix{Float64}}
+    D1             :: NTuple{2, Matrix{ComplexF64}}
+    D1_full        :: NTuple{2, Matrix{ComplexF64}}
+    Laplacian      :: Matrix{Float64}
+    Laplacian_full :: Matrix{Float64}
+    Biharmonic     :: Matrix{Float64}
+    fft_plan       :: P
+    ifft_plan      :: IP
+    fft_plan_full  :: PF           # 全尺寸 fft plan (ComplexF64 输入)
+    ifft_plan_full :: IPF          # 全尺寸 ifft plan (ComplexF64 输入)
+    fft_plan_1     :: Any          # 保持原来的 Any（标量场专用）
+    ifft_plan_1    :: Any
+    fft_plan_2     :: P
+    ifft_plan_2    :: IP
+    Nx             :: Int
+    Ny             :: Int
+    inv_s          :: Float64
+    # ── 改为具体类型（消除 AbstractArray 传染）──
+    temp_real1          :: Array{Float64, 3}
+    temp_real2          :: Array{Float64, 3}
+    temp_real3          :: Array{Float64, 3}
+    temp_comp1          :: Array{ComplexF64, 3}
+    temp_comp2          :: Array{ComplexF64, 3}
+    temp_comp3          :: Array{ComplexF64, 3}
+    temp_complex_irfft  :: Array{ComplexF64, 3}
+    # ── 新增：BiCGSTAB matvec 专用工作缓冲区（全尺寸，Nx×Ny×N）──
+    buf_mv1 :: Array{ComplexF64, 3}   # temp = L_psi * x_hat
+    buf_mv2 :: Array{ComplexF64, 3}   # grad_x_hat / grad_x_phys（复用）
+    buf_mv3 :: Array{ComplexF64, 3}   # grad_y_hat / grad_y_phys（复用）
+    buf_mv4 :: Array{ComplexF64, 3}   # flux_x_hat
+    buf_mv5 :: Array{ComplexF64, 3}   # flux_y_hat
+    # ── Step 2/3/4/5 共用的谱空间工作缓冲区（半谱尺寸）──
+    buf_rhat1 :: Array{ComplexF64, 3}   # (Nk × Ny × N)  通用谱缓冲
+    buf_rhat2 :: Array{ComplexF64, 3}
+    # ── Step 4/5 速度场工作缓冲区（半谱，2分量）──
+    buf_uhat1 :: Array{ComplexF64, 3}   # (Nk × Ny × 2)
+    buf_uhat2 :: Array{ComplexF64, 3}
+    # ── Step 4/5 物理空间速度工作缓冲区 ──
+    buf_uphys1 :: Array{Float64, 3}     # (Nx × Ny × 2)
+    buf_uphys2 :: Array{Float64, 3}
+    # ── 通用实空间 2D 工作缓冲区（标量，不带 N 维）──
+    buf_phys2d :: Array{Float64, 2}     # (Nx × Ny)
+    buf_hat2d  :: Array{ComplexF64, 2}  # (Nk × Ny)
+end
+
+
+# src/Types.jl
+# 在 FieldState 和 Operators 定义之后，添加以下内容
+
+# ============================================================
+#  Step1Cache：替代 Dict{Symbol,Any}，完全预分配
+# ============================================================
+"""
+    Step1Cache
+
+预分配的 Step 1 结果容器，替代 Dict{Symbol,Any}。
+所有字段类型确定，零装箱，支持原地写入 (.=)。
+在仿真初始化时创建一次，整个时间循环复用。
+"""
+struct Step1Cache
+    phi_11 :: Array{ComplexF64, 3}
+    mu_11  :: Array{ComplexF64, 3}
+    psi_11 :: Array{ComplexF64, 3}
+    nu_11  :: Array{ComplexF64, 3}
+
+    phi_12 :: Array{ComplexF64, 3}
+    mu_12  :: Array{ComplexF64, 3}
+    psi_12 :: Array{ComplexF64, 3}
+    nu_12  :: Array{ComplexF64, 3}
+
+    phi_13 :: Array{ComplexF64, 3}
+    mu_13  :: Array{ComplexF64, 3}
+    phi_14 :: Array{ComplexF64, 3}
+    mu_14  :: Array{ComplexF64, 3}
+
+    phi_21 :: Array{ComplexF64, 3}
+    mu_21  :: Array{ComplexF64, 3}
+    psi_21 :: Array{ComplexF64, 3}
+    nu_21  :: Array{ComplexF64, 3}
+end
+
+function Step1Cache(Nx::Int, Ny::Int, N::Int)
+    Nk = Nx ÷ 2 + 1
+    f() = zeros(ComplexF64, Nk, Ny, N)
+    return Step1Cache(f(),f(),f(),f(), f(),f(),f(),f(),
+                      f(),f(),f(),f(), f(),f(),f(),f())
 end
 
 
@@ -358,3 +423,6 @@ Type-stable: the `Val` dispatch resolves at compile time when `n` is
 a compile-time constant, and at runtime otherwise (still correct).
 """
 bdf_coeff(n::Int) = n == 1 ? BDFCoeff(Val(1)) : BDFCoeff(Val(2))
+
+
+

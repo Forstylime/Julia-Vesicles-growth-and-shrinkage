@@ -13,7 +13,7 @@
 
 using Test
 using FFTW
-using LinearAlgebra: norm
+using LinearAlgebra
 
 include("../src/Types.jl")
 include("../src/SpectralUtils.jl")

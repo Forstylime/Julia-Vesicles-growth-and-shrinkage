@@ -41,6 +41,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
     # BDF2 需要两个时间层，初始令 old = present
     old = deepcopy(present)
+    step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.N)
 
     # ── 3. 监控变量 ──────────────────────────────────────────────
     energy_history    = Float64[]
@@ -57,7 +58,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         bdf = bdf_coeff(n) #n == 1 ? BDFCoeff(1.0, -1.0, 0.0) : BDFCoeff(1.5, -2.0, 0.5)
 
         # ── 核心 7 步 ──
-        step1_res = solve_step1(present, old, ops, conf, bdf)
+        step1_res = solve_step1(present, old, ops, conf, bdf, step1_cache)
         step2_res = solve_step2(present, old, ops, conf, step1_res, bdf)
         step3_res = solve_step3(step1_res, step2_res)
         step4_res = solve_step4(present, old, ops, conf, bdf)

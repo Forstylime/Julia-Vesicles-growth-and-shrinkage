@@ -8,175 +8,132 @@ using Krylov
 """
 Step 1: 求解分裂后的线性方程组组件
 """
-function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf::Config, bdf::BDFCoeff)
+# src/Solvers.jl
+# solve_step1 签名增加 cache 参数
+
+function solve_step1(present::FieldState, old::FieldState,
+                     ops::Operators, conf::Config, bdf::BDFCoeff,
+                     cache::Step1Cache)        # ← 新增参数
     dt = conf.dt
-    a, b, c = bdf.a, bdf.b, bdf.c  # 在独立的STRUCT中存储了 BDF2 系数
-    A0 = present.A0  # 预定义的目标面积 A0，作为 get_H1 的输入参数
-    
-    # 1. 构造外推状态 (Star states)
-    phi_star = @. 2.0 * present.phi - old.phi
-    psi_star = @. 2.0 * present.psi - old.psi
+    a, b, c = bdf.a, bdf.b, bdf.c
+    A0 = present.A0
+
+    phi_star     = @. 2.0 * present.phi     - old.phi
+    psi_star     = @. 2.0 * present.psi     - old.psi
     phi_star_hat = @. 2.0 * present.phi_hat - old.phi_hat
     psi_star_hat = @. 2.0 * present.psi_hat - old.psi_hat
-    
-    # 2. 计算变系数 M_psi
+
     M_psi = @. get_M_psi(phi_star, conf)
     M_max = maximum(M_psi)
-
-    # 3. 预定义算子 (L_phi)
-    L_phi = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
-    L_psi = conf.S4
+    L_phi   = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
+    L_psi   = conf.S4
     lhs_phi = @. (a / dt) + conf.M_phi * L_phi
 
-    # 4. 定义 BiCGSTAB 求解器
-    # y = (a/dt)I - div(M_psi * grad(L_psi * x))
-    # note：这里经过测试，发现irfft会导致虚部信息丢失从而降低求解器效率，
-    # 因此采用全频域
-    # ==========================================
-    # 4.1. 内部的全频域求解器 (直接在全复数域构造和求解线性系统)
-    # ==========================================
-    function solve_psi_full_complex(rhs_full, conf::Config)
-        full_len = conf.Nx * conf.Ny * conf.N
-        
-        # 算子：使用全尺寸 fft 和 ifft
-        function A_psi_func_complex!(y_vec, x_vec)
-            x_hat = reshape(x_vec, conf.Nx, conf.Ny, conf.N)
-            y_hat = reshape(y_vec, conf.Nx, conf.Ny, conf.N)
-            
-            # L_psi * x_hat
-            temp_comp = L_psi .* x_hat 
-            
-            # 频域梯度
-            grad_x_hat = ops.D1_full[1] .* temp_comp
-            grad_y_hat = ops.D1_full[2] .* temp_comp
-            
-            # 转物理空间 (必须用 ifft)
-            grad_x_phys = ifft(grad_x_hat, (1, 2))
-            grad_y_phys = ifft(grad_y_hat, (1, 2))
-            
-            # 乘 M_psi
-            flux_x_phys = M_psi .* grad_x_phys
-            flux_y_phys = M_psi .* grad_y_phys
-            
-            # 转回频域 (必须用 fft)
-            flux_x_hat = fft(flux_x_phys, (1, 2))
-            flux_y_hat = fft(flux_y_phys, (1, 2))
-            
-            # 组装最终结果
-            @. y_hat = (a / dt) * x_hat - (ops.D1_full[1] * flux_x_hat + ops.D1_full[2] * flux_y_hat)
-            return y_vec
-        end
+    # BiCGSTAB 内核（与上版相同，零分配）
+    D1f = ops.D1_full
+    pfull, ifull = ops.fft_plan_full, ops.ifft_plan_full
+    b1, b2, b3, b4, b5 = ops.buf_mv1, ops.buf_mv2, ops.buf_mv3,
+                          ops.buf_mv4, ops.buf_mv5
+    a_dt = a / dt
 
-        A_psi = LinearMap{ComplexF64}(A_psi_func_complex!, full_len; ismutating=true)
-
-        # 预处理子 (注意：P_inv_hat 需要是全尺寸 Nx × Ny 的)
-        # 如果你外部传进来的 P_inv_hat 是一半大小，你需要在这里重新计算全尺寸的
-        P_inv_hat_full = @. 1.0 / ( (a / dt) - M_max * ops.Laplacian_full * L_psi ) 
-        
-        function prec_func_complex!(y_vec, r_vec)
-            r_hat = reshape(r_vec, conf.Nx, conf.Ny, conf.N)
-            y_hat = reshape(y_vec, conf.Nx, conf.Ny, conf.N)
-            @. y_hat = r_hat * P_inv_hat_full
-            return y_vec
-        end
-        P_inv = LinearMap{ComplexF64}(prec_func_complex!, full_len; ismutating=true)
-
-        # 在全复数域求解
-        rhs_vec = reshape(rhs_full, full_len)
-        sol_vec, stats = bicgstab(A_psi, rhs_vec; M=P_inv, atol=1e-14, rtol=conf.tol, itmax=20, history=true)
-        
-        # 检查收敛性, 如果不收敛，输出警告信息
-        !stats.solved && @warn "BiCGSTAB did not converge within the maximum iterations. Final residual: $(stats.resnorm)"
-
-        return reshape(sol_vec, conf.Nx, conf.Ny, conf.N)
+    function A_psi_func!(y_vec, x_vec)
+        x_hat = reshape(x_vec, conf.Nx, conf.Ny, conf.N)
+        y_hat = reshape(y_vec, conf.Nx, conf.Ny, conf.N)
+        @. b1 = L_psi * x_hat
+        @. b2 = D1f[1] * b1
+        @. b3 = D1f[2] * b1
+        mul!(b4, ifull, b2)
+        mul!(b5, ifull, b3)
+        @. b4 = M_psi * b4
+        @. b5 = M_psi * b5
+        mul!(b2, pfull, b4)
+        mul!(b3, pfull, b5)
+        @. y_hat = a_dt * x_hat - (D1f[1] * b2 + D1f[2] * b3)
+        return y_vec
     end
 
+    full_len   = conf.Nx * conf.Ny * conf.N
+    A_psi      = LinearMap{ComplexF64}(A_psi_func!, full_len; ismutating=true)
+    P_inv_diag = @. 1.0 / (a_dt - M_max * ops.Laplacian_full * L_psi)
 
-    # ==========================================
-    # 4.2. 外部包装器 (处理 rfft 的桥接)
-    # ==========================================
-    function solve_psi(rhs_rhat, conf::Config)
-        # 步骤 A: 将一半大小的 rhs_rhat "无损补全" 为全尺寸复数 rhs_full
-        # 巧妙利用 irfft -> fft，自动生成严格共轭对称的全频谱，省去手动 pad 的烦恼！
-        rhs_phys = irfft(rhs_rhat, conf.Nx, (1, 2)) 
+    function prec_func!(y_vec, r_vec)
+        r_hat = reshape(r_vec, conf.Nx, conf.Ny, conf.N)
+        y_hat = reshape(y_vec, conf.Nx, conf.Ny, conf.N)
+        @. y_hat = r_hat * P_inv_diag
+        return y_vec
+    end
+    P_inv = LinearMap{ComplexF64}(prec_func!, full_len; ismutating=true)
+
+    # solve_psi：将结果写入目标缓冲区 dest
+    function solve_psi!(dest::Array{ComplexF64, 3},
+                        rhs_rhat::Array{ComplexF64, 3})
+        rhs_phys = irfft(rhs_rhat, conf.Nx, (1, 2))
         rhs_full = fft(rhs_phys, (1, 2))
-        
-        # 步骤 B: 调用全复数域求解器，获得全尺寸复数解
-        sol_full = solve_psi_full_complex(rhs_full, conf)
-        
-        # 步骤 C: 截断回一半大小，完美适配外部的 rfft 生态
-        # 傅里叶谱的正半轴对应前 (Nx ÷ 2 + 1) 个元素
-        sol_rhat = sol_full[1:(conf.Nx ÷ 2 + 1), :, :]
-        
-        return sol_rhat
+        rhs_vec  = reshape(rhs_full, full_len)
+        sol_vec, stats = bicgstab(A_psi, rhs_vec;
+                                  M=P_inv, atol=1e-14,
+                                  rtol=conf.tol, itmax=20, history=true)
+        !stats.solved && @warn "BiCGSTAB 未收敛: $(stats.resnorm)"
+        sol_full = reshape(sol_vec, conf.Nx, conf.Ny, conf.N)
+        # 原地截取到 dest（半谱）
+        dest .= sol_full[1:(conf.Nx ÷ 2 + 1), :, :]
+        return dest
     end
 
-    # --- 开始分步求解 (11, 12, 13, 14, 21, ...) ---
-    
-    # 初始化结果容器 (NamedTuple)
-    res = Dict{Symbol, Any}()
+    # ── 分步求解：全部改为 .= 原地写入 ─────────────────────────────
 
-    # 11: 历史项
-    rhs_phi_11 = @. -(b * present.phi_hat + c * old.phi_hat) / dt
-    res[:phi_11_np1_hat] = rhs_phi_11 ./ lhs_phi
-    res[:mu_11_np1_hat] = L_phi .* res[:phi_11_np1_hat]
+    # 11
+    @. ops.buf_rhat1         = -(b * present.phi_hat + c * old.phi_hat) / dt
+    @. cache.phi_11          = ops.buf_rhat1 / lhs_phi
+    @. cache.mu_11           = L_phi * cache.phi_11
 
-    rhs_psi_11 = @. -(b * present.psi_hat + c * old.psi_hat) / dt
-    res[:psi_11_np1_hat] = solve_psi(rhs_psi_11, conf)
-    res[:nu_11_np1_hat] = L_psi .* res[:psi_11_np1_hat]
+    @. ops.buf_rhat1         = -(b * present.psi_hat + c * old.psi_hat) / dt
+    solve_psi!(cache.psi_11, ops.buf_rhat1)
+    @. cache.nu_11           = L_psi * cache.psi_11
 
-    # 12: H1/G 项
+    # 12
     H1_star_hat = to_spectral!(ops.temp_comp1, get_H1(phi_star, ops, conf, A0), ops)
-    rhs_phi_12 = @. -conf.M_phi * H1_star_hat
-    res[:phi_12_np1_hat] = rhs_phi_12 ./ lhs_phi
-    res[:mu_12_np1_hat]  = L_phi .* res[:phi_12_np1_hat] .+ H1_star_hat
-    
-    # G 的散度项: div(M_psi * grad(G_star))
-    G_star_hat  = to_spectral!(ops.temp_comp1, get_MG(phi_star, psi_star, conf), ops)
-    grad_G_x = to_physical!(ops.temp_real1, ops.D1[1] .* G_star_hat, ops)
-    grad_G_y = to_physical!(ops.temp_real2, ops.D1[2] .* G_star_hat, ops)
-    rhs_psi_12 = ops.D1[1] .* (to_spectral!(ops.temp_comp2, M_psi .* grad_G_x, ops)) .+ 
-                 ops.D1[2] .* (to_spectral!(ops.temp_comp3, M_psi .* grad_G_y, ops))
-    res[:psi_12_np1_hat] = solve_psi(rhs_psi_12, conf)
-    res[:nu_12_np1_hat] = L_psi .* res[:psi_12_np1_hat] .+ G_star_hat
+    @. cache.phi_12          = (-conf.M_phi * H1_star_hat) / lhs_phi
+    @. cache.mu_12           = L_phi * cache.phi_12 + H1_star_hat
 
-    # 13 & 14 (仅 phi)
+    G_star_hat  = to_spectral!(ops.temp_comp1, get_MG(phi_star, psi_star, conf), ops)
+    grad_G_x    = to_physical!(ops.temp_real1, ops.D1[1] .* G_star_hat, ops)
+    grad_G_y    = to_physical!(ops.temp_real2, ops.D1[2] .* G_star_hat, ops)
+    # ✅ 修复写法：拆分为两步，先计算谱变换，再广播乘法
+    to_spectral!(ops.temp_comp2, M_psi .* grad_G_x, ops)  # 原地写入 temp_comp2
+    to_spectral!(ops.temp_comp3, M_psi .* grad_G_y, ops)  # 原地写入 temp_comp3
+    @. ops.buf_rhat1 = ops.D1[1] * ops.temp_comp2 + ops.D1[2] * ops.temp_comp3
+    solve_psi!(cache.psi_12, ops.buf_rhat1)
+    @. cache.nu_12           = L_psi * cache.psi_12 + G_star_hat
+
+    # 13 & 14
     H2_star_hat = to_spectral!(ops.temp_comp2, get_H2(phi_star, ops, conf), ops)
     H3_star_hat = to_spectral!(ops.temp_comp3, get_H3(phi_star, psi_star, conf), ops)
-    res[:phi_13_np1_hat] = (@. -conf.M_phi * H2_star_hat) ./ lhs_phi
-    res[:phi_14_np1_hat] = (@. -conf.M_phi * H3_star_hat) ./ lhs_phi
-    res[:mu_13_np1_hat] = L_phi .* res[:phi_13_np1_hat] .+ H2_star_hat
-    res[:mu_14_np1_hat] = L_phi .* res[:phi_14_np1_hat] .+ H3_star_hat
+    @. cache.phi_13          = (-conf.M_phi * H2_star_hat) / lhs_phi
+    @. cache.phi_14          = (-conf.M_phi * H3_star_hat) / lhs_phi
+    @. cache.mu_13           = L_phi * cache.phi_13 + H2_star_hat
+    @. cache.mu_14           = L_phi * cache.phi_14 + H3_star_hat
 
-    # 21: 对流项
-    # 计算 u_star · grad(phi_star)
-    u_star = @. 2.0 * present.u - old.u
+    # 21
+    u_star          = @. 2.0 * present.u - old.u
     grad_phi_star_x = to_physical!(ops.temp_real1, ops.D1[1] .* phi_star_hat, ops)
     grad_phi_star_y = to_physical!(ops.temp_real2, ops.D1[2] .* phi_star_hat, ops)
-    u_grad_phi = @. u_star[:,:,1] * grad_phi_star_x + u_star[:,:,2] * grad_phi_star_y
-    res[:phi_21_np1_hat] = (-(to_spectral!(ops.temp_comp1, u_grad_phi, ops))) ./ lhs_phi
-    res[:mu_21_np1_hat] = L_phi .* res[:phi_21_np1_hat]
+    @. ops.temp_real3        = u_star[:,:,1] * grad_phi_star_x +
+                                u_star[:,:,2] * grad_phi_star_y
+    to_spectral!(ops.temp_comp1, ops.temp_real3, ops)
+    @. cache.phi_21 = -ops.temp_comp1 / lhs_phi
+    @. cache.mu_21  = L_phi * cache.phi_21
 
     grad_psi_star_x = to_physical!(ops.temp_real1, ops.D1[1] .* psi_star_hat, ops)
     grad_psi_star_y = to_physical!(ops.temp_real2, ops.D1[2] .* psi_star_hat, ops)
-    u_grad_psi = @. u_star[:,:,1] * grad_psi_star_x + u_star[:,:,2] * grad_psi_star_y
-    rhs_psi_21 = -(to_spectral!(ops.temp_comp1, u_grad_psi, ops))
-    res[:psi_21_np1_hat] = solve_psi(rhs_psi_21, conf)
-    res[:nu_21_np1_hat] = L_psi .* res[:psi_21_np1_hat]
+    @. ops.temp_real3        = u_star[:,:,1] * grad_psi_star_x +
+                                u_star[:,:,2] * grad_psi_star_y
+    to_spectral!(ops.temp_comp1, ops.temp_real3, ops)
+    @. ops.buf_rhat1 = -ops.temp_comp1
+    solve_psi!(cache.psi_21, ops.buf_rhat1)
+    @. cache.nu_21 = L_psi * cache.psi_21
 
-    # 逻辑优化：22, 23, 24 与之前的计算结果一致，直接复用
-    res[:phi_22_np1_hat] = res[:phi_12_np1_hat]
-    res[:psi_22_np1_hat] = res[:psi_12_np1_hat]
-    res[:phi_23_np1_hat] = res[:phi_13_np1_hat]
-    res[:phi_24_np1_hat] = res[:phi_14_np1_hat]
-
-    # 计算配套的 mu 和 nu (频谱)  
-    res[:mu_22_np1_hat] = res[:mu_12_np1_hat]
-    res[:nu_22_np1_hat] = res[:nu_12_np1_hat]
-    res[:mu_23_np1_hat] = res[:mu_13_np1_hat]
-    res[:mu_24_np1_hat] = res[:mu_14_np1_hat]
-
-    return res
+    return cache   # ← 返回 cache 而非 Dict
 end
 
 # File: src/Solvers.jl
@@ -184,8 +141,9 @@ end
 """
 Step 2: 求解分裂后的辅助变量 R1, R2, R3
 """
-function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf::Config, step1_res::Dict, bdf::BDFCoeff)
-    dx, dy = conf.dx, conf.dy
+function solve_step2(present::FieldState, old::FieldState,
+                     ops::Operators, conf::Config,
+                     cache::Step1Cache, bdf::BDFCoeff)  # ← cache 替换 step1_res::Dict    dx, dy = conf.dx, conf.dy
     a, b, c = bdf.a, bdf.b, bdf.c
     
     # 1. 构造外推状态和非线性变分项 (物理空间)
@@ -207,7 +165,7 @@ function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf:
     # 2. 积分辅助函数: int_dot(A, B) = sum(A .* B) * dx * dy
     # 使用 Julia 内置 dot 更高效
     # 这里的积分是全域的求和，即包含所有囊泡。
-    int_dot(A, B) = dot(A, B) * dx * dy
+    int_dot(A, B) = dot(A, B) * conf.dx * conf.dy
 
     # 3. 计算中间标量 U1, U2, U3
     # U1 = -(b*R1_n + c*R1_nm1)/a + integral(H1_star * (b*phi_n + c*phi_nm1)) / (2a)
@@ -221,20 +179,19 @@ function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf:
     # 4. 准备 Step 1 结果的物理空间场
     # 我们需要 phi_12, phi_13, phi_14, phi_22, phi_23, phi_24 以及对应的 psi
     # 注意：为了节省内存，我们在这里即时进行 IFFT
-    
-    phi_12 = real(ops.ifft_plan * step1_res[:phi_12_np1_hat])
-    phi_13 = real(ops.ifft_plan * step1_res[:phi_13_np1_hat])
-    phi_14 = real(ops.ifft_plan * step1_res[:phi_14_np1_hat])
-    
-    psi_12 = real(ops.ifft_plan * step1_res[:psi_12_np1_hat])
+    # 原：phi_12 = real(ops.ifft_plan * step1_res[:phi_12_np1_hat])
+    phi_12 = real(ops.ifft_plan * cache.phi_12)
+    phi_13 = real(ops.ifft_plan * cache.phi_13)
+    phi_14 = real(ops.ifft_plan * cache.phi_14)
+    psi_12 = real(ops.ifft_plan * cache.psi_12)
+    phi_11 = real(ops.ifft_plan * cache.phi_11)
+    psi_11 = real(ops.ifft_plan * cache.psi_11)
+    phi_21 = real(ops.ifft_plan * cache.phi_21)
+    psi_21 = real(ops.ifft_plan * cache.psi_21)
     
     # 5. 组装 LHS_1 和 RHS_1 (3x3 系统)
     LHS_1 = zeros(3, 3)
     RHS_1 = zeros(3)
-
-    # 这里的 phi_11 和 psi_11 也需要 IFFT
-    phi_11 = real(ops.ifft_plan * step1_res[:phi_11_np1_hat])
-    psi_11 = real(ops.ifft_plan * step1_res[:psi_11_np1_hat])
 
     LHS_1[1,1] = 1.0 - 0.5 * int_dot(H1_star, phi_12)
     LHS_1[1,2] = -0.5 * int_dot(H1_star, phi_13)
@@ -259,9 +216,6 @@ function solve_step2(present::FieldState, old::FieldState, ops::Operators, conf:
     # LHS_2 = LHS_1 是浅拷贝（别名），不是独立矩阵，在Julia中，LHS_2 = LHS_1 让两者指向同一个数组。
     # 若后续有任何对 LHS_2 的修改（当前代码虽然没有，但这是隐患），将会意外修改 LHS_1。应改为：
     LHS_2 = copy(LHS_1)
-
-    phi_21 = real(ops.ifft_plan * step1_res[:phi_21_np1_hat])
-    psi_21 = real(ops.ifft_plan * step1_res[:psi_21_np1_hat])
     
     RHS_2 = zeros(3)
     RHS_2[1] = 0.5 * int_dot(H1_star, phi_21)
@@ -284,46 +238,24 @@ end
 """
 Step 3: 根据求解出的 SAV 标量 R，线性组合分裂的场变量。
 """
-function solve_step3(step1_res::Dict, step2_res::NamedTuple)
-    # 提取 Step 2 算出的标量系数
+# 签名从 Dict 改为 Step1Cache，字段访问从 [:key] 改为 .field
+function solve_step3(cache::Step1Cache, step2_res::NamedTuple)
     R11, R21, R31 = step2_res.R_11_np1, step2_res.R_21_np1, step2_res.R_31_np1
     R12, R22, R32 = step2_res.R_12_np1, step2_res.R_22_np1, step2_res.R_32_np1
 
-    # --- 组合 第一组场 (phi_1, mu_1, psi_1, nu_1) ---
-    # 使用 @. 确保所有操作都在一个循环内完成
-    phi_1_np1_hat = @. step1_res[:phi_11_np1_hat] + 
-                       R11 * step1_res[:phi_12_np1_hat] + 
-                       R21 * step1_res[:phi_13_np1_hat] + 
-                       R31 * step1_res[:phi_14_np1_hat]
+    # phi_22=phi_12, phi_23=phi_13, phi_24=phi_14（逻辑复用，无需改变）
+    phi_1 = @. cache.phi_11 + R11*cache.phi_12 + R21*cache.phi_13 + R31*cache.phi_14
+    mu_1  = @. cache.mu_11  + R11*cache.mu_12  + R21*cache.mu_13  + R31*cache.mu_14
+    psi_1 = @. cache.psi_11 + R31*cache.psi_12
+    nu_1  = @. cache.nu_11  + R31*cache.nu_12
 
-    mu_1_np1_hat  = @. step1_res[:mu_11_np1_hat] + 
-                       R11 * step1_res[:mu_12_np1_hat] + 
-                       R21 * step1_res[:mu_13_np1_hat] + 
-                       R31 * step1_res[:mu_14_np1_hat]
+    phi_2 = @. cache.phi_21 + R12*cache.phi_12 + R22*cache.phi_13 + R32*cache.phi_14
+    mu_2  = @. cache.mu_21  + R12*cache.mu_12  + R22*cache.mu_13  + R32*cache.mu_14
+    psi_2 = @. cache.psi_21 + R32*cache.psi_12
+    nu_2  = @. cache.nu_21  + R32*cache.nu_12
 
-    psi_1_np1_hat = @. step1_res[:psi_11_np1_hat] + R31 * step1_res[:psi_12_np1_hat]
-    nu_1_np1_hat  = @. step1_res[:nu_11_np1_hat]  + R31 * step1_res[:nu_12_np1_hat]
-
-    # --- 组合 第二组场 (phi_2, mu_2, psi_2, nu_2) ---
-    phi_2_np1_hat = @. step1_res[:phi_21_np1_hat] + 
-                       R12 * step1_res[:phi_22_np1_hat] + 
-                       R22 * step1_res[:phi_23_np1_hat] + 
-                       R32 * step1_res[:phi_24_np1_hat]
-
-    mu_2_np1_hat  = @. step1_res[:mu_21_np1_hat] + 
-                       R12 * step1_res[:mu_22_np1_hat] + 
-                       R22 * step1_res[:mu_23_np1_hat] + 
-                       R32 * step1_res[:mu_24_np1_hat]
-
-    psi_2_np1_hat = @. step1_res[:psi_21_np1_hat] + R32 * step1_res[:psi_22_np1_hat]
-    nu_2_np1_hat  = @. step1_res[:nu_21_np1_hat]  + R32 * step1_res[:nu_22_np1_hat]
-
-    return (
-        phi_1_hat = phi_1_np1_hat, mu_1_hat = mu_1_np1_hat,
-        psi_1_hat = psi_1_np1_hat, nu_1_hat = nu_1_np1_hat,
-        phi_2_hat = phi_2_np1_hat, mu_2_hat = mu_2_np1_hat,
-        psi_2_hat = psi_2_np1_hat, nu_2_hat = nu_2_np1_hat
-    )
+    return (phi_1_hat=phi_1, mu_1_hat=mu_1, psi_1_hat=psi_1, nu_1_hat=nu_1,
+            phi_2_hat=phi_2, mu_2_hat=mu_2, psi_2_hat=psi_2, nu_2_hat=nu_2)
 end
 
 # File: src/Solvers.jl
@@ -331,54 +263,43 @@ end
 """
 Step 4: 求解分裂的中间速度场 u_tilde_1 和 u_tilde_2
 """
-function solve_step4(present::FieldState, old::FieldState, ops::Operators, conf::Config, bdf::BDFCoeff)
-    dt = conf.dt
-    eta = conf.eta
-    lamda = conf.lamda
+# solve_step4 签名增加 ops 中已有的缓冲区（buf_uhat1/2, buf_uphys1/2）
+function solve_step4(present::FieldState, old::FieldState,
+                     ops::Operators, conf::Config, bdf::BDFCoeff)
+    dt, eta, lamda = conf.dt, conf.eta, conf.lamda
     a, b, c = bdf.a, bdf.b, bdf.c
-    Nx, Ny = conf.Nx, conf.Ny
+    Nx, Ny  = conf.Nx, conf.Ny
 
-    # 1. 构造外推状态 (Star states)
-    # 物理空间
     phi_star = @. 2.0 * present.phi - old.phi
     psi_star = @. 2.0 * present.psi - old.psi
-    u_star   = @. 2.0 * present.u - old.u
-    
-    # 谱空间 (用于计算梯度)
-    # 注意：mu 和 nu 通常在 Step 3 已经算出 _hat 形式
-    # 这里我们直接外推谱空间变量
+    u_star   = @. 2.0 * present.u   - old.u
     u_star_hat = @. 2.0 * present.u_hat - old.u_hat
-    
-    # 2. 构造左端项算子 (LHS)
-    # (a/dt) - eta * Laplacian
-    lhs = @. (a / dt) - eta * ops.Laplacian
-
-    # 3. 计算 RHS 1 (历史项 + 压力梯度)
-    # rhs_1 = -(b*u_n + c*u_nm1)/dt - grad(p_n)
-    rhs_1_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
-    for d in 1:2
-        rhs_1_hat[:, :, d] = -(b * present.u_hat[:, :, d] + c * old.u_hat[:, :, d]) / dt .- 
-                                 (ops.D1[d] .* present.p_hat)
-    end
-
-    # 4. 计算非线性项 (Convective & Coupling)
-    # 我们需要先算出梯度项的物理空间表示
-    
-    # --- 对流项: (u* · grad) u* = (u_x .* dx + u_y .* dy) .* [u_x, u_y] ---
-    # grad_ux = [dux/dx, dux/dy], grad_uy = [duy/dx, duy/dy]
-    dux_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:, :, 1]))
-    dux_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:, :, 1]))
-    duy_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:, :, 2]))
-    duy_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:, :, 2]))
-
-    conv_x = @. u_star[:, :, 1] * dux_dx + u_star[:, :, 2] * dux_dy
-    conv_y = @. u_star[:, :, 1] * duy_dx + u_star[:, :, 2] * duy_dy
-
-    # --- 相场耦合项: phi* * grad(mu*) + psi* * grad(nu*) ---
-    # 首先外推化学势的谱空间
     mu_star_hat = @. 2.0 * present.mu_hat - old.mu_hat
     nu_star_hat = @. 2.0 * present.nu_hat - old.nu_hat
-    
+
+    lhs = @. (a / dt) - eta * ops.Laplacian
+
+    # ── RHS 1：原地写入 ops.buf_uhat1 ───────────────────────────
+    for d in 1:2
+        @. ops.buf_uhat1[:,:,d] = -(b * present.u_hat[:,:,d] +
+                                     c * old.u_hat[:,:,d]) / dt -
+                                    ops.D1[d] * present.p_hat
+    end
+
+    # 对流项梯度（复用 temp_comp1/2/3 和 temp_real1/2/3）
+    #to_physical!(ops.temp_real1,
+    #    ops.D1[1] .* u_star_hat[:,:,1], ops)  # dux_dx — 注意：需要2D plan
+    # ⚠️ 注意：u_star_hat[:,:,1] 是2D切片，需要使用 ifft_plan_1
+    dux_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:,:,1]))
+    dux_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:,:,1]))
+    duy_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:,:,2]))
+    duy_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:,:,2]))
+
+    # 对流项写入 buf_uphys1（复用）
+    @. ops.buf_uphys1[:,:,1] = u_star[:,:,1]*dux_dx + u_star[:,:,2]*dux_dy
+    @. ops.buf_uphys1[:,:,2] = u_star[:,:,1]*duy_dx + u_star[:,:,2]*duy_dy
+
+    # 耦合项
     dmu_dx = real(ops.ifft_plan * (ops.D1[1] .* mu_star_hat))
     dmu_dy = real(ops.ifft_plan * (ops.D1[2] .* mu_star_hat))
     dnu_dx = real(ops.ifft_plan * (ops.D1[1] .* nu_star_hat))
@@ -387,33 +308,30 @@ function solve_step4(present::FieldState, old::FieldState, ops::Operators, conf:
     coupl_x = @. phi_star * dmu_dx + psi_star * dnu_dx
     coupl_y = @. phi_star * dmu_dy + psi_star * dnu_dy
 
-    # 5. 构造 RHS 2 (谱空间)
-    rhs_2_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
-    # 注意：fft_plan_1 是针对二维矩阵数据的
-    rhs_2_hat[:, :, 1] = ops.fft_plan_1 * (-conv_x .- lamda .* dropdims(sum(coupl_x, dims=3), dims=3))
-    rhs_2_hat[:, :, 2] = ops.fft_plan_1 * (-conv_y .- lamda .* dropdims(sum(coupl_y, dims=3), dims=3))
+    # ── RHS 2：写入 ops.buf_uhat2 ───────────────────────────────
+    ops.buf_uhat2[:,:,1] .= ops.fft_plan_1 *
+        (-dropdims(sum(ops.buf_uphys1[:,:,1:1], dims=3), dims=3)
+         .- lamda .* dropdims(sum(coupl_x, dims=3), dims=3))
+    ops.buf_uhat2[:,:,2] .= ops.fft_plan_1 *
+        (-dropdims(sum(ops.buf_uphys1[:,:,2:2], dims=3), dims=3)
+         .- lamda .* dropdims(sum(coupl_y, dims=3), dims=3))
 
-    # 6. 求解 (谱空间除法) 并转回物理空间
-    u_tilde_1_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
-    u_tilde_2_hat = zeros(ComplexF64, Nx÷2+1, Ny, 2)
-
+    # ── 求解（谱空间除法）→ 原地写入 buf_uhat1/2 ────────────────
     for d in 1:2
-        @. u_tilde_1_hat[:, :, d] = rhs_1_hat[:, :, d] / lhs
-        @. u_tilde_2_hat[:, :, d] = rhs_2_hat[:, :, d] / lhs
+        @. ops.buf_uhat1[:,:,d] = ops.buf_uhat1[:,:,d] / lhs  # u_tilde_1_hat
+        @. ops.buf_uhat2[:,:,d] = ops.buf_uhat2[:,:,d] / lhs  # u_tilde_2_hat
     end
 
-    # 转回物理空间 (用于后续步骤)
-    u_tilde_1 = zeros(Float64, Nx, Ny, 2)
-    u_tilde_2 = zeros(Float64, Nx, Ny, 2)
-    
-    u_tilde_1 .= real(ops.ifft_plan_2 * u_tilde_1_hat)
-    u_tilde_2 .= real(ops.ifft_plan_2 * u_tilde_2_hat)
+    # ── 转物理空间 → 原地写入 buf_uphys1/2 ──────────────────────
+    ops.buf_uphys1 .= real(ops.ifft_plan_2 * ops.buf_uhat1)
+    ops.buf_uphys2 .= real(ops.ifft_plan_2 * ops.buf_uhat2)
 
+    # 直接返回 ops 中的 view，不分配新数组
     return (
-        u_tilde_1_hat = u_tilde_1_hat,
-        u_tilde_2_hat = u_tilde_2_hat,
-        u_tilde_1 = u_tilde_1,
-        u_tilde_2 = u_tilde_2
+        u_tilde_1_hat = ops.buf_uhat1,
+        u_tilde_2_hat = ops.buf_uhat2,
+        u_tilde_1     = ops.buf_uphys1,
+        u_tilde_2     = ops.buf_uphys2
     )
 end
 
