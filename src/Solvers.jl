@@ -22,19 +22,18 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
     # 2. 计算变系数 M_psi
     M_psi = @. get_M_psi(phi_star, conf)
     M_max = maximum(M_psi)
-    
-    # 3. 计算非线性项的变分导数 (频谱)
-    "由于会用到多次to_specral!，预分配内存不够，转移到具体计算模块以避免前者被覆盖"
 
-    # 4. 预定义算子 (L_phi)
+    # 3. 预定义算子 (L_phi)
     L_phi = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
     L_psi = conf.S4
     lhs_phi = @. (a / dt) + conf.M_phi * L_phi
 
-    # 5. 定义 BiCGSTAB 算子 A(psi)
+    # 4. 定义 BiCGSTAB 求解器
     # y = (a/dt)I - div(M_psi * grad(L_psi * x))
+    # note：这里经过测试，发现irfft会导致虚部信息丢失从而降低求解器效率，
+    # 因此采用全频域
     # ==========================================
-    # 1. 内部的全频域求解器 (直接在全复数域构造和求解线性系统)
+    # 4.1. 内部的全频域求解器 (直接在全复数域构造和求解线性系统)
     # ==========================================
     function solve_psi_full_complex(rhs_full, conf::Config)
         full_len = conf.Nx * conf.Ny * conf.N
@@ -94,7 +93,7 @@ function solve_step1(present::FieldState, old::FieldState, ops::Operators, conf:
 
 
     # ==========================================
-    # 2. 外部包装器 (处理 rfft 的桥接)
+    # 4.2. 外部包装器 (处理 rfft 的桥接)
     # ==========================================
     function solve_psi(rhs_rhat, conf::Config)
         # 步骤 A: 将一半大小的 rhs_rhat "无损补全" 为全尺寸复数 rhs_full

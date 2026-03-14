@@ -1,14 +1,11 @@
 # File: src/SpectralUtils.jl
 #
 # Builds spectral derivative operators and FFTW plans.
-# Key design decisions vs. the MATLAB version:
 #   - rfft/irfft instead of fft/ifft: exploits real-valuedness of all
 #     physical fields, giving (Nx÷2+1)×Ny spectral arrays (~half storage)
 #   - Wavenumber arrays kept as broadcast-compatible vectors, not full
 #     matrices: kx is (Nx÷2+1)×1, ky is 1×Ny. Operations like kx.^2 .+ ky.^2
-#     produce (Nx÷2+1)×Ny results without storing intermediate full arrays.
-#   - Dealiasing (3/2 rule) plans are precomputed on the padded grid and
-#     stored in Operators, so dealias_mul! has zero setup cost at runtime.
+#     produce (N
 
 using FFTW
 
@@ -87,7 +84,7 @@ function build_operators(cfg::Config)
     # ----------------------------------------------------------
     tmp_real    = zeros(Float64,    Nx, Ny, N)
     tmp_complex = zeros(ComplexF64, Nx÷2+1, Ny, N)
-    tmp_real0    = zeros(Float64,    Nx, Ny, N)
+    tmp_real0    = zeros(Float64,    Nx, Ny, N) # for full fft/ifft plans if needed in BiCGSTAB
     tmp_complex0 = zeros(ComplexF64, Nx, Ny, N) # for full fft/ifft plans if needed in BiCGSTAB
     tmp_real_1    = zeros(Float64,    Nx, Ny)
     tmp_complex_1 = zeros(ComplexF64, Nx÷2+1, Ny)
@@ -168,7 +165,7 @@ end
 # ============================================================
 
 """
-谱系数点乘函数，不用去混叠
+谱系数点乘函数
 """
 function mult!(buffer::AbstractArray{ComplexF64}, u_hat::AbstractArray{ComplexF64}, v_hat::AbstractArray{ComplexF64}, ops::Operators)
 

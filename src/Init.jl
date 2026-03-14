@@ -7,7 +7,7 @@ using FFTW
 """
 function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
     N = 1   # single phase field for now
-    Nx, Ny   = 256, 256
+    Nx, Ny   = 128, 128
     Lx, Ly   = 1.0, 1.0
     epsilon  = 0.01
     gamma_bend = 0.1

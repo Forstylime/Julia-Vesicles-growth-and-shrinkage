@@ -7,8 +7,6 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     conf = set_para_base(dt_val, T_val; goal=:s)
     ops  = build_operators(conf)
     mkpath(save_path)
-    # 预分配内存
-    #present = FieldState(conf.Nx, conf.Ny, conf.N)
 
     # ── 2. 生成初始场 ────────────────────────────────────────────
     present = generate_initial_condition(conf, ops, state_type)
@@ -48,7 +46,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     energy_history    = Float64[]
     save_interval     = max(1, conf.Nt ÷ save_frames)
 
-    @info "仿真开始。初始 Q = $(present.Q)，初始面积 = $(present.A0)"
+    @info "仿真开始。初始面积 = $(present.A0)"
 
     # ── 4. 时间推进循环 ──────────────────────────────────────────
     p_meter = Progress(conf.Nt, 1, "Computing...")
@@ -83,8 +81,8 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         to_physical!(present.psi, present.psi_hat, ops)
         to_physical!(present.mu, present.mu_hat, ops)
         to_physical!(present.nu, present.nu_hat, ops)
-        present.p .= ops.ifft_plan_1 * present.p_hat
-        present.u .= ops.ifft_plan_2 * present.u_hat
+        present.p .= ops.ifft_plan_1 * present.p_hat # 使用特制的plan_1
+        present.u .= ops.ifft_plan_2 * present.u_hat # 使用特制的plan_2
 
         # 标量
         present.R1 = step6_res.R1
@@ -94,16 +92,6 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
         # ── 监控 ──
         push!(energy_history, compute_modified_energy(present, old, ops, conf))
-
-        """
-        # 可视化以及数据保存
-        if n % save_interval == 0
-            t = n * conf.dt
-            #save_visualization(present, conf, t, save_path)
-            @info @sprintf("Step %d / %d  t = %.5f  E = %.6e",
-                           n, conf.Nt, t, last(energy_history))
-        end
-        """
 
         next!(p_meter) # 更新进度条
     end

@@ -5,9 +5,9 @@
 #   - Config is fully immutable (constructed once, never mutated)
 #   - FieldState is mutable only for scalar SAV variables; array fields
 #     are updated in-place via copyto!() to avoid allocations
-#   - Operators stores rfft/irfft plans (real-to-complex) for ~2x
-#     speedup and half memory vs. full complex fft on real fields
+#   - Operators stores vary plans (real-to-complex)
 #   - All structs are parametric where the type may vary (e.g., GPU path)
+
 
 using FFTW
 
@@ -23,8 +23,6 @@ simulation loop and never modified. All derived quantities (Nt, dx, dy)
 are computed automatically by the keyword constructor.
 
 Physical parameters use their standard symbol names from the paper.
-Rename `A` → `area_target` to avoid collision with the matrix variable A
-used throughout the solver steps.
 """
 struct Config
     # --- Physical parameters ---
@@ -86,16 +84,16 @@ Keyword constructor that automatically computes derived quantities:
 # Example
 ```julia
 cfg = Config(
+    N = 1,
     epsilon=0.05, M_phi=1.0, M0_psi=1.0, eta=1.0,
     gamma_surf=1.0, gamma_area=1.0, gamma_bend=1.0,
-    gamma_in=1.0, beta_in=0.0, psi_in=1.0,
-    gamma_out=1.0, beta_out=0.0, psi_out=1.0,
+    gamma_in=1.0, beta_in=0.0, psi_in_v=[1.0],
+    gamma_out=1.0, beta_out=0.0, psi_out_v=[1.0],
     lamda=1,
     S1=1.0, S2=1.0, S3=1.0, S4=1.0,
     C1=1.0, C2=1.0, C3=1.0,
     dt=1e-4, T=1.0, Nx=128, Ny=128, Lx=2π, Ly=2π,
-    tol=1e-10, goal=:minimize_energy,
-    area_target=0.5
+    tol=1e-10, goal=:s
 )
 ```
 """
@@ -116,7 +114,7 @@ function Config(;
     dx = Lx / Nx
     dy = Ly / Ny
 
-    spe_len = (Nx ÷ 2 + 1) * Ny * N  # 频谱空间的总长度，供线性求解器使用
+    spe_len = (Nx ÷ 2 + 1) * Ny * N  # 频谱空间的总长度
 
     return Config(
         N,
@@ -150,15 +148,17 @@ Base.broadcastable(c::Config) = Ref(c)
 Stores all physical fields at a single time level (either t=n or t=n-1).
 
 # Array layout conventions
-- `phi`:   Nx × Ny × Nφ  (third dim = number of phase fields; Nφ=1 initially)
+- `phi`:   Nx × Ny × Nφ  (third dim = number of phase fields; Nφ=1 default)
 - `u`:     Nx × Ny × 2   (last dim = spatial components, column-major friendly)
-- `*_hat`: spectral counterparts from rfft; shape is (Nx÷2+1) × Ny × [Nφ or 2]
+- `p`:     Nx × Ny (pressure)
+- `*_hat`: spectral counterparts from rfft; shape is (Nx÷2+1) × Ny × [Nφ or 2 or 1]
            rfft exploits real-valuedness: only stores non-redundant frequencies
 
 # Mutability
 Arrays are NOT individually reassigned — update them in-place with copyto!().
-Only the SAV scalar fields (Q, R1, R2, R3) and area_lambda are plain mutable
-fields that get scalar assignment each timestep.
+Only the SAV scalar fields (Q, R1, R2, R3) are plain mutable
+fields that get scalar assignment each timestep. 
+while A0 should be inmutable due to no changes during all process
 
 # Updating state between timesteps
 Do NOT do: `state_prev = state_curr`  (this is a pointer copy, not a deep copy)
@@ -273,6 +273,8 @@ end
 
 Spectral operators and FFTW plans
 
+# Using rfft2 and irfft2 gobal, and some else for specific situation
+
 # Sign convention
 All derivative operators follow the standard spectral convention:
   D1[α]    =  i * k[α]              (first derivative in direction α)
@@ -296,11 +298,11 @@ struct Operators{P, IP}
     Laplacian  :: Matrix{Float64}
     Laplacian_full :: Matrix{Float64} # full fft frequencies for dealiasing
     Biharmonic :: Matrix{Float64}
-    fft_plan   :: P
-    ifft_plan  :: IP
-    fft_plan0
-    ifft_plan0
-    fft_plan_1
+    fft_plan   :: P # gobal plan
+    ifft_plan  :: IP # gobal plan
+    fft_plan0        # full size
+    ifft_plan0       # full size
+    fft_plan_1       
     ifft_plan_1
     fft_plan_2 :: P
     ifft_plan_2:: IP
