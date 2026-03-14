@@ -14,7 +14,7 @@ Step 1: 求解分裂后的线性方程组组件
 function solve_step1(present::FieldState, old::FieldState,
                      ops::Operators, conf::Config, bdf::BDFCoeff,
                      cache::Step1Cache)        # ← 新增参数
-    dt = conf.dt
+    dt = present.dt
     a, b, c = bdf.a, bdf.b, bdf.c
     A0 = present.A0
 
@@ -266,7 +266,7 @@ Step 4: 求解分裂的中间速度场 u_tilde_1 和 u_tilde_2
 # solve_step4 签名增加 ops 中已有的缓冲区（buf_uhat1/2, buf_uphys1/2）
 function solve_step4(present::FieldState, old::FieldState,
                      ops::Operators, conf::Config, bdf::BDFCoeff)
-    dt, eta, lamda = conf.dt, conf.eta, conf.lamda
+    dt, eta, lamda = present.dt, conf.eta, conf.lamda
     a, b, c = bdf.a, bdf.b, bdf.c
     Nx, Ny  = conf.Nx, conf.Ny
 
@@ -341,7 +341,7 @@ end
 Step 5: 求解标量 Q^{n+1}
 """
 function solve_step5(present::FieldState, old::FieldState, ops::Operators, conf::Config, step3_res::NamedTuple, step4_res::NamedTuple, bdf::BDFCoeff)
-    dt, dx, dy = conf.dt, conf.dx, conf.dy
+    dt, dx, dy = present.dt, conf.dx, conf.dy
     a, b, c = bdf.a, bdf.b, bdf.c
     lamda = conf.lamda
 
@@ -456,7 +456,7 @@ Step 7: 压力修正 (旋转增量投影法)
 确保速度场散度为零，并更新压力场。
 """
 function solve_step7(present::FieldState, ops::Operators, conf::Config, step6_res::NamedTuple, bdf::BDFCoeff)
-    a, dt, eta = bdf.a, conf.dt, conf.eta
+    a, dt, eta = bdf.a, present.dt, conf.eta
     Nx, Ny = conf.Nx, conf.Ny
 
     # 1. 计算中间速度的散度 (谱空间)

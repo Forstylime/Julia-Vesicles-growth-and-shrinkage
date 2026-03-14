@@ -105,6 +105,19 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
                         exp(smoothness * (d3 - mx)))
             d_final  = @. d_shape - (radius / 3)
             phi[:, :, n] .= @. -tanh(d_final / (sqrt(2) * epsilon))
+        elseif state_type == 3  # star-shape
+            if conf.goal == 's'
+                R0 = 0.3
+                amplitude = 0.01
+            else
+                R0 = 0.18
+                amplitude = 0.02
+            end
+            k = 10
+            r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
+            theta = @. atan(Y - cy_n, X - cx_n)
+            R_theta = @. R0 + amplitude * cos(k * theta)
+            phi[:, :, n] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
         end
     end
 
@@ -132,6 +145,6 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         phi, phi_hat, psi, psi_hat,
         u, u_hat, p, p_hat,
         mu, mu_hat, nu, nu_hat,
-        1.0, 1.0, 1.0, 1.0, [0.0]     # Q, R1, R2, R3, A0
+        1.0, 1.0, 1.0, 1.0, [0.0], 0.0     # Q, R1, R2, R3, A0
     )
 end

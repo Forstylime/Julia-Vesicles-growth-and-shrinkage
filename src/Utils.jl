@@ -106,7 +106,7 @@ function compute_modified_energy(present::FieldState, old::FieldState,
     # 2. 压力伪能量
     grad_p_x = ops.ifft_plan_1 * (ops.D1[1] .* present.p_hat)
     grad_p_y = ops.ifft_plan_1 * (ops.D1[2] .* present.p_hat)
-    pressure = (conf.dt^2 / 3.0) * (integrate_sq(grad_p_x, conf) +
+    pressure = (present.dt^2 / 3.0) * (integrate_sq(grad_p_x, conf) +
                                      integrate_sq(grad_p_y, conf))
 
     # 3. SAV 标量能量 和 Q 标量能量

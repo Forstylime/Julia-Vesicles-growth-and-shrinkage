@@ -197,6 +197,7 @@ mutable struct FieldState
 
     # --- Initial area constraint target (derived from A0) ---
     A0 :: Vector{Float64}
+    dt :: Float64
 end
 
 # 定义构造函数进行预分配
@@ -224,10 +225,10 @@ function FieldState(Nx::Int, Ny::Int, N::Int)
     nu_hat  = zeros(ComplexF64, Nx_hat, Ny, N)
     
     # 初始化标量变量
-    Q, R1, R2, R3, A0 = 0.0, 0.0, 0.0, 0.0, [0.0]
+    Q, R1, R2, R3, A0, dt = 0.0, 0.0, 0.0, 0.0, [0.0], 0.0
     
     # 返回构造好的实例
-    return FieldState(phi, phi_hat, psi, psi_hat, u, u_hat, p, p_hat, mu, mu_hat, nu, nu_hat, Q, R1, R2, R3, A0)
+    return FieldState(phi, phi_hat, psi, psi_hat, u, u_hat, p, p_hat, mu, mu_hat, nu, nu_hat, Q, R1, R2, R3, A0, dt)
 end
 
 """

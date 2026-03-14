@@ -8,6 +8,12 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     ops  = build_operators(conf)
     mkpath(save_path)
 
+    t1 = range(0.0, 1e-6, step=1e-8)   # 第一段
+    t2 = range(1e-6, T_val, step=conf.dt)    # 第二段
+    # 拼接：注意使用 vcat，为了避免重叠点，通常拼接时剔除后续段的起始点
+    Dt = vcat(t1, t2[2:end])
+    Nt = length(Dt) # 理论上，总步数 = 100 + (T - 1e-6)/dt
+
     # ── 2. 生成初始场 ────────────────────────────────────────────
     present = generate_initial_condition(conf, ops, state_type)
 
@@ -45,14 +51,16 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
     # ── 3. 监控变量 ──────────────────────────────────────────────
     energy_history    = Float64[]
-    save_interval     = max(1, conf.Nt ÷ save_frames)
+    save_interval     = max(1, Nt ÷ save_frames)
 
-    @info "仿真开始。初始面积 = $(present.A0)"
+    @info "仿真开始。初始面积 = $(present.A0), 总步数 = $(Nt-1)"
 
     # ── 4. 时间推进循环 ──────────────────────────────────────────
-    p_meter = Progress(conf.Nt, 1, "Computing...")
+    p_meter = Progress(Nt, 1, "Computing...")
 
-    for n in 1:conf.Nt
+    for n in 1:Nt-1
+
+        present.dt = Dt[n+1] - Dt[n]
 
         # BDF1（首步）或 BDF2
         bdf = bdf_coeff(n) #n == 1 ? BDFCoeff(1.0, -1.0, 0.0) : BDFCoeff(1.5, -2.0, 0.5)
