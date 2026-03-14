@@ -37,5 +37,5 @@ println("仿真完成！")
 println("正在生成可视化图像...")
 conf = set_para_base(dt, T) # goal 参数不影响可视化，可以不指定，直接使用默认值
 phi = dropdims(results[1].phi, dims=3)
-fig_phi = plot_field(phi, conf; filename="./results/final_phi_128.png");
+fig_phi = plot_field(phi, conf; filename="./results/final_phi.png");
 display(fig_phi)

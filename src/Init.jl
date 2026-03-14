@@ -115,7 +115,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
             end
             k = 10
             r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
-            theta = @. atan(Y - cy_n, X - cx_n)
+            theta = @. atan(X - cx_n, Y - cy_n)
             R_theta = @. R0 + amplitude * cos(k * theta)
             phi[:, :, n] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
         end
