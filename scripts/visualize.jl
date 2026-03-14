@@ -4,7 +4,7 @@ function plot_field(field::Matrix{Float64}, cfg::Config;
                    colormap::Symbol = :RdBu,
                    filename::Union{String,Nothing} = nothing)
     
-    fig = Figure(; size = (500, 500))
+    fig = Figure(; size = (600, 500))
     
     # 逻辑优化：创建一个字典或者只在 title 不为 nothing 时传递该参数
     axis_kwargs = (xlabel = "x", ylabel = "y", aspect = DataAspect())

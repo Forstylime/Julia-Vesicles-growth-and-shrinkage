@@ -4,7 +4,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
                         save_frames::Int=100)
 
     # ── 1. 初始化配置与算子 ──────────────────────────────────────
-    conf = set_para_base(dt_val, T_val; goal=:s)
+    conf = set_para_base(dt_val, T_val)
     ops  = build_operators(conf)
     mkpath(save_path)
 
@@ -16,6 +16,12 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
     # ── 2. 生成初始场 ────────────────────────────────────────────
     present = generate_initial_condition(conf, ops, state_type)
+
+    # 初始场可视化检查
+    phi_plot = sum(present.phi, dims=3) .+ conf.N .- 1
+    phi_plot = dropdims(phi_plot, dims=3)
+    fig_phi = plot_field(phi_plot, conf);
+    display(fig_phi)
 
     # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
     A_0 = calculate_area(present.phi, ops, conf)
@@ -44,7 +50,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
     present.mu .= ops.ifft_plan * present.mu_hat
     present.nu .= ops.ifft_plan * present.nu_hat
-
+    
     # BDF2 需要两个时间层，初始令 old = present
     old = deepcopy(present)
     step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.N)

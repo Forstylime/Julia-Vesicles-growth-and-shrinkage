@@ -73,7 +73,7 @@ function solve_step1(present::FieldState, old::FieldState,
         sol_vec, stats = bicgstab(A_psi, rhs_vec;
                                   M=P_inv, atol=1e-14,
                                   rtol=conf.tol, itmax=20, history=true)
-        !stats.solved && @warn "BiCGSTAB 未收敛: $(stats.resnorm)"
+        !stats.solved && @warn "BiCGSTAB 未收敛: $(stats.status)"
         sol_full = reshape(sol_vec, conf.Nx, conf.Ny, conf.N)
         # 原地截取到 dest（半谱）
         dest .= sol_full[1:(conf.Nx ÷ 2 + 1), :, :]

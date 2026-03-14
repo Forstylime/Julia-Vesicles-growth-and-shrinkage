@@ -7,10 +7,10 @@ using LinearAlgebra
 using Printf
 using ProgressMeter
 using CairoMakie
+using Infiltrator
+using Revise
 FFTW.set_num_threads(8)  # 或者 Sys.CPU_THREADS
 BLAS.set_num_threads(8)
-
-#using IterativeSolvers
 println("依赖库加载完成。\n")
 println("-------------------------------------")
 println("加载模块...\n")
@@ -29,7 +29,7 @@ println("开始仿真...")
 # 两个关键字参数：数据保存路径和保存时间间隔，默认保存到当前目录下的 results 文件夹，每 100 步保存一次
 dt = 1e-6
 T  = 1e-4
-results = run_simulation(dt, T, 3);
+results = run_simulation(dt, T, 7);
 # 结果保存完成后，results 是一个包含时间序列数据的字典，可以用于后续分析和可视化
 println("仿真完成！")
 
@@ -37,5 +37,5 @@ println("仿真完成！")
 println("正在生成可视化图像...")
 conf = set_para_base(dt, T) # goal 参数不影响可视化，可以不指定，直接使用默认值
 phi = dropdims(results[1].phi, dims=3)
-fig_phi = plot_field(phi, conf; filename="./results/final_phi.png");
+fig_phi = plot_field(phi, conf; filename="./results/double_phi.png");
 display(fig_phi)

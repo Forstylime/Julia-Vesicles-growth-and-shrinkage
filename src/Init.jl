@@ -5,20 +5,21 @@ using FFTW
 """
 第一阶段：不含真实 A，用于生成初始场
 """
-function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
-    N = 1   # single phase field for now
+function set_para_base(dt::Float64, T::Float64)
+    N = 2   # single phase field for now
     Nx, Ny   = 256, 256
-    Lx, Ly   = 1.0, 1.0
+    Lx, Ly   = 1.0 * 1, 1.0
     epsilon  = 0.01
     gamma_bend = 0.1
     gamma_in, gamma_out = 1e5, 1e5
+    goal =:g
 
     if N == 1
         psi_in_v  = [0.1]
         psi_out_v = [0.8]
     elseif N == 2
-        psi_in_v  = [0.1, 0.65]
-        psi_out_v = [0.8, 0.6]
+        psi_in_v  = [0.65, 0.65]
+        psi_out_v = [0.8, 0.8]
     elseif N == 3
         psi_in_v  = [0.1, 0.65, 0.5]
         psi_out_v = [0.8, 0.6, 0.4]
@@ -45,9 +46,9 @@ function set_para_base(dt::Float64, T::Float64; goal::Symbol=:s)
         gamma_out   = gamma_out,
         beta_out    = 0.0,
         psi_out_v   = psi_out_v,
-        lamda      = 1.0,
+        lamda       = 1.0,
         S1 = S1, S2 = S2, S3 = S3, S4 = S4,
-        C1 = 1.0, C2 = 5.0e5, C3 = 4.0e4,
+        C1 = 1.0, C2 = 5.0e5, C3 = 1.0e6,
         dt = dt, T = T,
         Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
         tol  = 1e-12,
@@ -76,19 +77,22 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         cx = [Lx / 2]
         cy = [Ly / 2]
     elseif N == 2
-        cx = [Lx / 3, 2Lx / 3]
+        cx = [0.3, 0.8]
         cy = [Ly / 2, Ly / 2]
     elseif N == 3
         cx = [Lx / 4, Lx / 2, 3Lx / 4]
         cy = [Ly / 2, Ly / 2, Ly / 2]
     end
 
-    for n in 1:N
-        cx_n, cy_n = cx[n], cy[n]
+    if N == 1
+        if state_type > 6
+            error("错误：state_type 值不合法 (state_type = $state_type, N = $N)，请检查输入数据！")
+        end
+        cx_n, cy_n = cx, cy
         if state_type == 1  # 单个椭圆
             R      = 0.2 * Lx
             dist   = @. sqrt((X - cx_n)^2 / 2 + (Y - cy_n)^2)
-            phi[:, :, n] .= @. tanh((R - dist) / (sqrt(2) * epsilon))
+            phi[:, :, 1] .= @. tanh((R - dist) / (sqrt(2) * epsilon))
 
         elseif state_type == 2  # 三角形
             Xc, Yc    = X .- cx_n, Y .- cy_n
@@ -104,9 +108,9 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
                         exp(smoothness * (d2 - mx)) +
                         exp(smoothness * (d3 - mx)))
             d_final  = @. d_shape - (radius / 3)
-            phi[:, :, n] .= @. -tanh(d_final / (sqrt(2) * epsilon))
-        elseif state_type == 3  # star-shape
-            if conf.goal == 's'
+            phi[:, :, 1] .= @. -tanh(d_final / (sqrt(2) * epsilon))
+        else state_type == 3  # star-shape
+            if conf.goal === :s
                 R0 = 0.3
                 amplitude = 0.01
             else
@@ -117,14 +121,32 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
             r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
             theta = @. atan(X - cx_n, Y - cy_n)
             R_theta = @. R0 + amplitude * cos(k * theta)
-            phi[:, :, n] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
+            phi[:, :, 1] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
+        end
+    else
+        if state_type <= 6
+            error("错误：state_type 值不合法 (state_type = $state_type, N = $N)，对N>1,state_type>6！")
+        end
+        for n in 1:N
+            cx_n, cy_n = cx[n], cy[n]
+            if state_type == 7 # 两个star-shape
+                if conf.goal ===:s
+                    error("对state_type=$state_type,conf.goal应该是g")
+                end
+                R0 = 0.18
+                amplitude = 0.02
+                k = 10
+                r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
+                theta = @. atan(X - cx_n, Y - cy_n)
+                R_theta = @. R0 + amplitude * cos(k * theta)
+                phi[:, :, n] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
+            end
         end
     end
-
     # 初始化 psi
     psi = zeros(Nx, Ny, N)
     for n in 1:N
-        psi[:, :, n] = if conf.goal == :s
+        psi[:, :, n] = if conf.goal === :s
             @. -0.1 * phi[:, :, n] + 0.7
         else
             @. -0.35 * phi[:, :, n] + 0.45
