@@ -83,12 +83,8 @@ function compute_original_energy(state::FieldState, ops::Operators, conf::Config
     F_b = conf.gamma_bend * integrate(f_bend(state.phi, ops, conf), conf)
     F_o = integrate(f_osmotic(state.phi, state.psi, conf), conf)
 
-    A_sperse = zeros(Float64, conf.N)
-    for n in 1:conf.N
-        A_sperse[n] = calculate_area(state.phi[:, :, n], ops, conf)
-        @info "囊泡 $n 的面积 = $(A_sperse[n])"
-    end
-    F_a = sum(0.5 * conf.gamma_area * (A_sperse - state.A0)^2)
+    A_sperse = calculate_area(state.phi, ops, conf)  # 一次搞定所有囊泡
+    F_a = sum(0.5 .* conf.gamma_area .* (A_sperse .- state.A0).^2)
 
     return kinetic + conf.lambda * (F_s + F_b + F_o + F_a)
 end
@@ -204,7 +200,7 @@ function get_H1(phi::Array{Float64, 3}, ops::Operators, conf::Config, A0::Vector
     R1      = sqrt(W1 + conf.C1)
     A_sperse = calculate_area(phi, ops, conf)
     omega   = get_omega(phi, ops, conf)
-    factor  = conf.gamma_area * (A_sperse - A0) * (3 * sqrt(2) / 4)
+    factor  = @. conf.gamma_area * (A_sperse - A0) * (3 * sqrt(2) / 4)
     factor_view = reshape(factor, 1, 1, conf.N) # 将 factor 从 (N,) 变为 (1, 1, N)，以便与 omega 点乘广播
     return @. (factor_view * omega) / R1
 end

@@ -62,7 +62,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     @info "仿真开始。初始面积 = $(present.A0), 总步数 = $(Nt-1)"
 
     # ── 4. 时间推进循环 ──────────────────────────────────────────
-    p_meter = Progress(Nt, 1, "Computing...")
+    p_meter = Progress(Nt-1, 1, "Computing...")
 
     for n in 1:Nt-1
 
@@ -109,7 +109,21 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         push!(energy_history, compute_modified_energy(present, old, ops, conf))
 
         next!(p_meter) # 更新进度条
-    end
 
-    return present, energy_history
+    end
+    
+        for n in 1:min(5, Nt-1)   # 只跑5步看耗时分布
+            present.dt = Dt[n+1] - Dt[n]
+            bdf = bdf_coeff(n)
+
+            @time step1_res = solve_step1(present, old, ops, conf, bdf, step1_cache)
+            @time step2_res = solve_step2(present, old, ops, conf, step1_res, bdf)
+            @time step3_res = solve_step3(step1_res, step2_res)
+            @time step4_res = solve_step4(present, old, ops, conf, bdf)
+            @time step5_res = solve_step5(present, old, ops, conf, step3_res, step4_res, bdf)
+            @time step6_res = solve_step6(step2_res, step3_res, step4_res, step5_res)
+            @time step7_res = solve_step7(present, ops, conf, step6_res, bdf)
+        end
+
+    return present, energy_history, Dt
 end

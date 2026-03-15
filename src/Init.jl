@@ -7,15 +7,19 @@ using FFTW
 """
 function set_para_base(dt::Float64, T::Float64)
     N = 2   # single phase field for now
-    Nx, Ny   = 256, 256
-    Lx, Ly   = 1.0 * 1, 1.0
+    Nx, Ny   = 256, 128
+    Lx, Ly   = 1.0*N, 1.0
     epsilon  = 0.01
     gamma_bend = 0.1
     gamma_in, gamma_out = 1e5, 1e5
     goal =:g
 
     if N == 1
+        if goal ===:s
         psi_in_v  = [0.1]
+        else 
+            psi_in_v  = [0.65]
+        end
         psi_out_v = [0.8]
     elseif N == 2
         psi_in_v  = [0.65, 0.65]
@@ -77,7 +81,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         cx = [Lx / 2]
         cy = [Ly / 2]
     elseif N == 2
-        cx = [0.3, 0.8]
+        cx = [0.7, 1.3]
         cy = [Ly / 2, Ly / 2]
     elseif N == 3
         cx = [Lx / 4, Lx / 2, 3Lx / 4]
