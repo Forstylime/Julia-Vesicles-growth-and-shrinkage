@@ -3,7 +3,7 @@
 using FFTW
 
 """
-第一阶段：不含真实 A，用于生成初始场
+第一阶段：不含真实 A, 用于生成初始场
 """
 function set_para_base(dt::Float64, T::Float64)
     N = 2   # single phase field for now
@@ -81,7 +81,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         cx = [Lx / 2]
         cy = [Ly / 2]
     elseif N == 2
-        cx = [0.7, 1.3]
+        cx = [0.73 1.27]
         cy = [Ly / 2, Ly / 2]
     elseif N == 3
         cx = [Lx / 4, Lx / 2, 3Lx / 4]
@@ -129,7 +129,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         end
     else
         if state_type <= 6
-            error("错误：state_type 值不合法 (state_type = $state_type, N = $N)，对N>1,state_type>6！")
+            error("错误: state_type 值不合法 (state_type = $state_type, N = $N)，对N>1,state_type>6！")
         end
         for n in 1:N
             cx_n, cy_n = cx[n], cy[n]
@@ -137,7 +137,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
                 if conf.goal ===:s
                     error("对state_type=$state_type,conf.goal应该是g")
                 end
-                R0 = 0.18
+                R0 = 0.2
                 amplitude = 0.02
                 k = 10
                 r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
