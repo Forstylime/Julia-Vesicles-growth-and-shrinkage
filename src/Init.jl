@@ -6,8 +6,8 @@ using FFTW
 第一阶段：不含真实 A, 用于生成初始场
 """
 function set_para_base(dt::Float64, T::Float64)
-    N = 2   # single phase field for now
-    Nx, Ny   = 256, 128
+    N = 1   # single phase field for now
+    Nx, Ny   = 256, 256
     Lx, Ly   = 1.0*N, 1.0
     epsilon  = 0.01
     gamma_bend = 0.1
@@ -113,7 +113,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
                         exp(smoothness * (d3 - mx)))
             d_final  = @. d_shape - (radius / 3)
             phi[:, :, 1] .= @. -tanh(d_final / (sqrt(2) * epsilon))
-        else state_type == 3  # star-shape
+        elseif state_type == 3  # star-shape
             if conf.goal === :s
                 R0 = 0.3
                 amplitude = 0.01
@@ -126,8 +126,22 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
             theta = @. atan(X - cx_n, Y - cy_n)
             R_theta = @. R0 + amplitude * cos(k * theta)
             phi[:, :, 1] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
+        elseif state_type == 4  # 随机扰动形状（random blob）
+            R0, amplitude = conf.goal === :s ? (0.3, 0.15) : (0.2, 0.25)
+
+            r     = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
+            theta = @. atan(X - cx_n, Y - cy_n)
+
+            R_theta = fill(R0, size(theta))
+            for k in 1:10
+                an = (rand() * 2 - 1) * amplitude / k
+                pn = rand() * 2π
+                @. R_theta += an * R0 * cos(k * theta + pn)
+            end
+
+            phi[:, :, 1] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
         end
-    else
+    else # N >= 2
         if state_type <= 6
             error("错误: state_type 值不合法 (state_type = $state_type, N = $N)，对N>1,state_type>6！")
         end
