@@ -118,16 +118,16 @@ function solve_step1(present::FieldState, old::FieldState,
     u_star          = @. 2.0 * present.u - old.u
     grad_phi_star_x = to_physical!(ops.temp_real1, ops.D1[1] .* phi_star_hat, ops)
     grad_phi_star_y = to_physical!(ops.temp_real2, ops.D1[2] .* phi_star_hat, ops)
-    @. ops.temp_real3        = u_star[:,:,1] * grad_phi_star_x +
-                                u_star[:,:,2] * grad_phi_star_y
+    ops.temp_real3 .= selectdim(u_star, ndims(u_star), 1) .* grad_phi_star_x +
+                        selectdim(u_star, ndims(u_star), 2) .* grad_phi_star_y
     to_spectral!(ops.temp_comp1, ops.temp_real3, ops)
     @. cache.phi_21 = -ops.temp_comp1 / lhs_phi
     @. cache.mu_21  = L_phi * cache.phi_21
 
     grad_psi_star_x = to_physical!(ops.temp_real1, ops.D1[1] .* psi_star_hat, ops)
     grad_psi_star_y = to_physical!(ops.temp_real2, ops.D1[2] .* psi_star_hat, ops)
-    @. ops.temp_real3        = u_star[:,:,1] * grad_psi_star_x +
-                                u_star[:,:,2] * grad_psi_star_y
+    ops.temp_real3 .= selectdim(u_star, ndims(u_star), 1) .* grad_psi_star_x +
+                        selectdim(u_star, ndims(u_star), 2) .* grad_psi_star_y
     to_spectral!(ops.temp_comp1, ops.temp_real3, ops)
     @. ops.buf_rhat1 = -ops.temp_comp1
     solve_psi!(cache.psi_21, ops.buf_rhat1)
@@ -269,6 +269,7 @@ function solve_step4(present::FieldState, old::FieldState,
     dt, eta, lamda = present.dt, conf.eta, conf.lamda
     a, b, c = bdf.a, bdf.b, bdf.c
     Nx, Ny  = conf.Nx, conf.Ny
+    ndim = ndims(present.u_hat)
 
     phi_star = @. 2.0 * present.phi - old.phi
     psi_star = @. 2.0 * present.psi - old.psi
@@ -281,19 +282,19 @@ function solve_step4(present::FieldState, old::FieldState,
 
     # ── RHS 1：原地写入 ops.buf_uhat1 ───────────────────────────
     for d in 1:2
-        @. ops.buf_uhat1[:,:,d] = -(b * present.u_hat[:,:,d] +
-                                     c * old.u_hat[:,:,d]) / dt -
-                                    ops.D1[d] * present.p_hat
+        selectdim(ops.buf_uhat1, ndim, d) .= -(b .* selectdim(present.u_hat, ndim, d) .+
+                                     c .* selectdim(old.u_hat, ndim, d)) / dt .-
+                                    ops.D1[d] .* present.p_hat
     end
 
-    # 对流项梯度（复用 temp_comp1/2/3 和 temp_real1/2/3）
+    # 对流项梯度（复用 temp_comp1/2/3 和 temp_real1/2/3）selectdim(present.u_hat, ndim, d)
     #to_physical!(ops.temp_real1,
     #    ops.D1[1] .* u_star_hat[:,:,1], ops)  # dux_dx — 注意：需要2D plan
     # ⚠️ 注意：u_star_hat[:,:,1] 是2D切片，需要使用 ifft_plan_1
-    dux_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:,:,1]))
-    dux_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:,:,1]))
-    duy_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* u_star_hat[:,:,2]))
-    duy_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* u_star_hat[:,:,2]))
+    dux_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* selectdim(u_star_hat, ndim, 1)))
+    dux_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* selectdim(u_star_hat, ndim, 1)))
+    duy_dx = real(ops.ifft_plan_1 * (ops.D1[1] .* selectdim(u_star_hat, ndim, 2)))
+    duy_dy = real(ops.ifft_plan_1 * (ops.D1[2] .* selectdim(u_star_hat, ndim, 2)))
 
     # 对流项写入 buf_uphys1（复用）
     @. ops.buf_uphys1[:,:,1] = u_star[:,:,1]*dux_dx + u_star[:,:,2]*dux_dy

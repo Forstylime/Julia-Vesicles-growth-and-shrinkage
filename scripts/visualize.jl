@@ -1,7 +1,7 @@
 # 单个场的可视化函数
 function plot_field(field::Matrix{Float64}, cfg::Config;
                    title::Union{String,Nothing} = nothing, # 默认设为 nothing
-                   colormap::Symbol = :RdBu,
+                   colormap::Symbol = :viridis,       # 颜色映射,
                    filename::Union{String,Nothing} = nothing)
     
     fig = Figure(; size = (600, 500))
