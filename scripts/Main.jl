@@ -118,45 +118,13 @@ function _visualize(state, energy_history, Dt::AbstractVector, T, save_path)
     display(fig_phi)
 
     if length(energy_history) > 1
-        # energy_history[n] is recorded at the end of time step n,
-        # which corresponds to time Dt[n+1].
         t_energy = Dt[2 : length(energy_history) + 1]
-        fig_E = _plot_energy(energy_history, t_energy)
-        save(joinpath(save_path, "energy_history.png"), fig_E)
+        fig_E = plot_vector(energy_history, collect(t_energy);
+                            ylabel   = "Modified energy",
+                            title    = "SAV modified energy vs. time",
+                            filename = joinpath(save_path, "energy_history.png"))
         display(fig_E)
     end
-end
-
-
-"""
-    _plot_energy(history, t_energy)
-
-Plot the SAV modified energy against the true (non-uniform) time axis.
-`t_energy[n]` is the physical time at which `history[n]` was recorded.
-A log-scale x-axis is used to make both the fine warm-up phase and the
-main phase visible simultaneously.
-"""
-function _plot_energy(history::Vector{Float64}, t_energy::AbstractVector)
-    fig = Figure(size = (750, 480))
-    ax  = Axis(fig[1, 1];
-               xlabel = "t",
-               ylabel = "Modified energy",
-               title  = "SAV modified energy vs. time",
-    )
-    lines!(ax, collect(t_energy), history; linewidth = 1.5)
-
-    # Mark the boundary between the warm-up and main phases
-    t_switch = 1e-6
-    if first(t_energy) < t_switch < last(t_energy)
-        vlines!(ax, [t_switch];
-                color     = :gray,
-                linestyle = :dash,
-                linewidth = 1,
-                label     = "phase switch (t = 1e-6)")
-        axislegend(ax; position = :rt)
-    end
-
-    return fig
 end
 
 
