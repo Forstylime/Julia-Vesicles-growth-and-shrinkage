@@ -18,9 +18,17 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     present = generate_initial_condition(conf, ops, state_type)
 
     # 初始场可视化检查
-    phi_plot = sum(present.phi, dims=3) .+ conf.N .- 1
-    phi_plot = dropdims(phi_plot, dims=3)
-    fig_phi = plot_field(phi_plot, conf);
+    if ndims(present.phi) == 3
+        phi_plot = sum(present.phi, dims=3) .+ conf.N .- 1
+        phi_plot = dropdims(phi_plot, dims=3)
+        fig_phi = plot_field(phi_plot, conf)
+    elseif ndims(present.phi) == 4
+        phi_plot = sum(present.phi, dims=4) .+ conf.N .- 1
+        phi_plot = dropdims(phi_plot, dims=4)
+        fig_phi = plot_iso(phi_plot, conf)
+    else 
+        error("Size of field (phi, psi, ...) = $(size(present.phi)) not correct!")
+    end
     display(fig_phi)
 
     # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
@@ -53,11 +61,11 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     
     # BDF2 需要两个时间层，初始令 old = present
     old = deepcopy(present)
-    step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.N)
+    step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.Nz, conf.N)
 
     # ── 3. 监控变量 ──────────────────────────────────────────────
-    energy_history    = Float64[]
-    save_interval     = max(1, Nt ÷ save_frames)
+    energy_history     = Float64[]
+    area_ratio_history = Float64[]
 
     @info "仿真开始。初始面积 = $(present.A0), 总步数 = $(Nt-1)"
 
@@ -107,10 +115,12 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
         # ── 监控 ──
         push!(energy_history, compute_modified_energy(present, old, ops, conf))
+        area_ratio = sum(abs.(calculate_area(present.phi, ops, conf) .- A_0)) ./ sum(A_0)
+        push!(area_ratio_history, area_ratio)
 
         next!(p_meter) # 更新进度条
 
     end
 
-    return present, energy_history, Dt
+    return present, energy_history, area_ratio_history, Dt
 end

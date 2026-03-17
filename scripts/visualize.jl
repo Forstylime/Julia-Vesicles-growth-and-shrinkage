@@ -1,8 +1,8 @@
 
 # 单个场的可视化函数
 function plot_field(field::Matrix{Float64}, cfg::Config;
-                   title::Union{String,Nothing} = nothing,
-                   colormap = :RdBu,
+                   title::Union{String,Nothing} = nothing, # 默认设为 nothing
+                   colormap::Symbol = :viridis, # 颜色映射,
                    filename::Union{String,Nothing} = nothing)
 
     fig = Figure(; size = (600, 500))
@@ -116,7 +116,7 @@ function plot_vector(ys         :: Union{Vector{Float64}, Vector{<:Vector{Float6
     curves = ys isa Vector{Float64} ? [ys] : ys
     t_col  = collect(ts)            # 确保是普通 Vector，兼容所有 AbstractVector
 
-    fig = Figure(size = (750, 380))
+    fig = Figure(size = (750, 480))
 
     axis_kwargs = (xlabel = "t", ylabel = ylabel)
     if !isnothing(title)
@@ -127,9 +127,9 @@ function plot_vector(ys         :: Union{Vector{Float64}, Vector{<:Vector{Float6
     for (i, y) in enumerate(curves)
         lbl = (!isnothing(labels) && i ≤ length(labels)) ? labels[i] : nothing
         if isnothing(lbl)
-            lines!(ax, t_col, y; linewidth = 1.5)
+            lines!(ax, t_col, y; linewidth = 2)
         else
-            lines!(ax, t_col, y; linewidth = 1.5, label = lbl)
+            lines!(ax, t_col, y; linewidth = 2, label = lbl)
         end
     end
 
@@ -152,59 +152,35 @@ function plot_vector(ys         :: Union{Vector{Float64}, Vector{<:Vector{Float6
 end
 
 
-# ── visualize.jl ──────────────────────────────────────────────────────────────
-# MATLAB-style theme：白底、黑框、Times 字体、网格线，与论文图表风格一致。
-# 通过 set_theme! 全局生效，本文件内所有绘图函数自动继承，无需逐处传参。
+# 三维可视化函数
+function plot_iso(field::Array{Float64,3}, cfg::Config;
+                         isovalue::Float64 = 0.0,
+                         title::Union{String,Nothing} = nothing,
+                         colormap::Symbol = :viridis,
+                         filename::Union{String,Nothing} = nothing)
 
-const MATLAB_THEME = Theme(
-    # 背景与字体
-    backgroundcolor = :white,
-    fontsize        = 12,
-    fonts           = (; regular = "Times New Roman",
-                         bold    = "Times New Roman Bold",
-                         italic  = "Times New Roman Italic"),
+    x = range(0.0, cfg.Lx; length = cfg.Nx)
+    y = range(0.0, cfg.Ly; length = cfg.Ny)
+    z = range(0.0, cfg.Lz; length = cfg.Nz)
 
-    Axis = (
-        # 坐标轴外框（四边都显示，类似 MATLAB box on）
-        topspinevisible    = true,
-        rightspinevisible  = true,
-        topspinecolor      = :black,
-        rightspinecolor    = :black,
-        leftspinecolor     = :black,
-        bottomspinecolor   = :black,
+    fig = Figure(size = (700, 600))
 
-        # 刻度朝内
-        xtickalign  = 1,
-        ytickalign  = 1,
-        xticksize   = 5,
-        yticksize   = 5,
+    axis_kwargs = (xlabel="x", ylabel="y", zlabel="z")
+    if !isnothing(title)
+        axis_kwargs = (title=title, axis_kwargs...)
+    end
 
-        # 网格线（浅灰，类似 MATLAB 默认网格）
-        xgridvisible      = true,
-        ygridvisible      = true,
-        xgridcolor        = RGBAf(0, 0, 0, 0.12),
-        ygridcolor        = RGBAf(0, 0, 0, 0.12),
-        xgridstyle        = :solid,
-        ygridstyle        = :solid,
+    ax = Axis3(fig[1,1]; axis_kwargs...)
 
-        # 背景
-        backgroundcolor   = :white,
-    ),
+    volume!(ax, 
+            x[1] .. x[end], 
+            y[1] .. y[end], 
+            z[1] .. z[end], 
+            field; 
+            algorithm = :iso, 
+            isovalue = isovalue, 
+            colormap = colormap)
 
-    # 默认线条：MATLAB 蓝 #0072BD，宽度 1.5
-    Lines = (
-        color     = RGBf(0/255, 114/255, 189/255),
-        linewidth = 1.5,
-    ),
-
-    # 图例样式
-    Legend = (
-        framevisible  = true,
-        framecolor    = :black,
-        bgcolor       = :white,
-        padding       = (6f0, 6f0, 4f0, 4f0),
-    ),
-)
-
-# 在文件加载时立即生效，整个会话内所有图都使用此主题
-set_theme!(MATLAB_THEME)
+    isnothing(filename) || save(filename, fig)
+    return fig
+end
