@@ -23,17 +23,17 @@
 # 积分辅助（dx*dy 梯形近似）
 # ----------------------------------------------------------------
 "普通积分"
-@inline integrate(f, conf::Config) = sum(f) * conf.dx * conf.dy
+@inline integrate(f, conf::Config) = sum(f) * conf.dx * conf.dy * conf.dz
 
 "平方积分，适用于涉及范数||x||^2的计算"
-@inline integrate_sq(f, conf::Config) = sum(abs2, f)  * conf.dx * conf.dy
+@inline integrate_sq(f, conf::Config) = sum(abs2, f) * conf.dx * conf.dy * conf.dz
 
 # ----------------------------------------------------------------
 # 能量密度函数, 执行点乘，返回和ϕ，ψ同结构的数组
 # ----------------------------------------------------------------
 
 "表面能密度 f_surf"
-function f_surf(phi::Array{Float64, 3}, ops::Operators, conf::Config)
+function f_surf(phi::Array{Float64, 4}, ops::Operators, conf::Config)
     phi_hat = to_spectral!(ops.temp_comp1, phi, ops)
     gradx_phi = to_physical!(ops.temp_real1, ops.D1[1] .* phi_hat, ops)
     grady_phi = to_physical!(ops.temp_real2, ops.D1[2] .* phi_hat, ops)
@@ -52,8 +52,8 @@ end
 "渗透能密度 f_osmotic"
 function f_osmotic(phi, psi, conf::Config)
     P     = p_phi(phi)
-    psi_in  = reshape(conf.psi_in_v, 1, 1, :)
-    psi_out = reshape(conf.psi_out_v, 1, 1, :)
+    psi_in  = reshape(conf.psi_in_v, 1, 1, 1, :)
+    psi_out = reshape(conf.psi_out_v, 1, 1, 1, :)
     f_in  = @. 0.5 * conf.gamma_in  * (psi - psi_in)^2  + conf.beta_in
     f_out = @. 0.5 * conf.gamma_out * (psi - psi_out)^2 + conf.beta_out
     return @. ((1 + P) / 2) * f_in + ((1 - P) / 2) * f_out
@@ -63,11 +63,11 @@ end
 # 面积计算
 # ----------------------------------------------------------------
 
-function calculate_area(phi::Array{Float64, 3}, ops::Operators, conf::Config)
-    surf = f_surf(phi, ops, conf) # 这里的 surf 是一个三维数组，第三维是囊泡索引
+function calculate_area(phi::Array{Float64, 4}, ops::Operators, conf::Config)
+    surf = f_surf(phi, ops, conf) # 这里的 surf 是一个4维数组，第4维是囊泡索引
     area = zeros(Float64, conf.N)
     for n in 1:conf.N
-        area[n] = integrate(surf[:, :, n], conf) # 对每个囊泡的 surf 切片进行积分，得到对应的面积
+        area[n] = integrate(surf[:, :, :, n], conf) # 对每个囊泡的 surf 切片进行积分，得到对应的面积
     end
     return area # 返回一个长度为 N 的向量，每个元素是对应囊泡的面积
 end
@@ -103,7 +103,7 @@ function compute_modified_energy(present::FieldState, old::FieldState,
     grad_p_x = ops.ifft_plan_1 * (ops.D1[1] .* present.p_hat)
     grad_p_y = ops.ifft_plan_1 * (ops.D1[2] .* present.p_hat)
     pressure = (present.dt^2 / 3.0) * (integrate_sq(grad_p_x, conf) +
-                                     integrate_sq(grad_p_y, conf))
+                                       integrate_sq(grad_p_y, conf))
 
     # 3. SAV 标量能量 和 Q 标量能量
     scale_energy(r_new, r_old) = 0.5 * r_new^2 + 0.5 * (2r_new - r_old)^2
@@ -141,7 +141,7 @@ function compute_modified_energy(present::FieldState, old::FieldState,
 end
 
 # ----------------------------------------------------------------
-# 变分中间量，结构与 phi, psi 相同，第三维是对应囊泡索引
+# 变分中间量，结构与 phi, psi 相同，第4维是对应囊泡索引
 # ----------------------------------------------------------------
 
 "ω = (φ³-φ)/ε - ε·Δφ"
@@ -191,17 +191,17 @@ end
 
 # ----------------------------------------------------------------
 # 变分导数 H1, H2, H3, MG，这里分别计算各个囊泡对应的变分导数，不合并，
-# 因此返回的数组结构与 phi, psi 相同。这里H_i的第三维也是变分导数索引，和囊泡索引对应。
+# 因此返回的数组结构与 phi, psi 相同。这里H_i的第4维也是变分导数索引，和囊泡索引对应。
 # 输入和返回都是实空间的
 # ----------------------------------------------------------------
 
-function get_H1(phi::Array{Float64, 3}, ops::Operators, conf::Config, A0::Vector{Float64})
+function get_H1(phi::Array{Float64, 4}, ops::Operators, conf::Config, A0::Vector{Float64})
     W1      = get_W1(phi, ops, conf, A0) # 这里的 W1 是所有囊泡的第一能量之和
     R1      = sqrt(W1 + conf.C1)
     A_sperse = calculate_area(phi, ops, conf)
     omega   = get_omega(phi, ops, conf)
     factor  = @. conf.gamma_area * (A_sperse - A0) * (3 * sqrt(2) / 4)
-    factor_view = reshape(factor, 1, 1, conf.N) # 将 factor 从 (N,) 变为 (1, 1, N)，以便与 omega 点乘广播
+    factor_view = reshape(factor, 1, 1, 1, conf.N) # 将 factor 从 (N,) 变为 (1, 1, 1, N)，以便与 omega 点乘广播
     return @. (factor_view * omega) / R1
 end
 
@@ -228,8 +228,8 @@ end
 function get_H3(phi, psi, conf::Config)
     W3    = get_W3(phi, psi, conf) # 这里的 W3 是所有囊泡的第三能量之和
     R3    = sqrt(W3 + conf.C3)
-    psi_in  = reshape(conf.psi_in_v, 1, 1, :)
-    psi_out = reshape(conf.psi_out_v, 1, 1, :)
+    psi_in  = reshape(conf.psi_in_v, 1, 1, 1, :)
+    psi_out = reshape(conf.psi_out_v, 1, 1, 1, :)
     f_in  = @. 0.5 * conf.gamma_in  * (psi - psi_in)^2  + conf.beta_in
     f_out = @. 0.5 * conf.gamma_out * (psi - psi_out)^2 + conf.beta_out
     return @. (0.5 * p_phi_prime(phi) * (f_in - f_out)) / R3
@@ -239,8 +239,8 @@ function get_MG(phi, psi, conf::Config)
     W3    = get_W3(phi, psi, conf) # 这里的 W3 是所有囊泡的第三能量之和
     R3    = sqrt(W3 + conf.C3)
     P     = p_phi(phi)
-    psi_in  = reshape(conf.psi_in_v, 1, 1, :)
-    psi_out = reshape(conf.psi_out_v, 1, 1, :)
+    psi_in  = reshape(conf.psi_in_v, 1, 1, 1, :)
+    psi_out = reshape(conf.psi_out_v, 1, 1, 1, :)
     dF_in  = @. conf.gamma_in  * (psi - psi_in)
     dF_out = @. conf.gamma_out * (psi - psi_out)
     G1    = @. 0.5 * (1 + P) * dF_in + 0.5 * (1 - P) * dF_out

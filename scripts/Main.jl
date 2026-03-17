@@ -17,6 +17,7 @@ using LinearAlgebra
 using Printf
 using ProgressMeter
 using CairoMakie
+using GLMakie
 # using Infiltrator          # debug aid; remove for production runs
 
 FFTW.set_num_threads(1)  # 256×256 单线程已是最优
@@ -25,14 +26,27 @@ BLAS.set_num_threads(4)  # BLAS 的矩阵运算可以多线程，但你的矩阵
 # ── 2. Project source files (includet = include + Revise tracking) ───────────
 # Load order matters: dependencies before dependents.
 _SRC = joinpath(@__DIR__, "..", "src")
-_SCR = @__DIR__
+_SCR = joinpath(@__DIR__, "..", "scripts")
+    
+
+#    joinpath(_SRC, "Types_3d.jl"),
+#    joinpath(_SRC, "SpectralUtils_3d.jl"),
+#    joinpath(_SRC, "Utils_3d.jl"),
+#    joinpath(_SRC, "Init_3d.jl"),
+#    joinpath(_SRC, "Solvers_3d.jl"),
+
+#    joinpath(_SRC, "Types.jl"),
+#    joinpath(_SRC, "SpectralUtils.jl"),
+#    joinpath(_SRC, "Utils.jl"),
+#    joinpath(_SRC, "Init.jl"),
+#    joinpath(_SRC, "Solvers.jl"),
 
 for file in (
-    joinpath(_SRC, "Types.jl"),
-    joinpath(_SRC, "SpectralUtils.jl"),
-    joinpath(_SRC, "Utils.jl"),
-    joinpath(_SRC, "Solvers.jl"),
-    joinpath(_SRC, "Init.jl"),
+    joinpath(_SRC, "Types_3d.jl"),
+    joinpath(_SRC, "SpectralUtils_3d.jl"),
+    joinpath(_SRC, "Utils_3d.jl"),
+    joinpath(_SRC, "Init_3d.jl"),
+    joinpath(_SRC, "Solvers_3d.jl"),
     joinpath(_SRC, "simulation.jl"),
     joinpath(_SCR, "visualize.jl"),
 )
@@ -74,17 +88,17 @@ state, E, Dt = main(dt=1e-6, T=1e-3, save_frames=500)
 function main(;
     dt          :: Float64 = 1e-6,
     T           :: Float64 = 1e-4,
-    state_type  :: Int     = 7,
+    state_type  :: Int     = 1,
     save_path   :: String  = joinpath(@__DIR__, "..", "results"),
     save_frames :: Int     = 100,
 )
     mkpath(save_path)
     @info "Simulation started" dt T state_type save_path
 
-    local state, energy_history, Dt
+    local state, energy_history, area_ratio_history, Dt
     try
         # run_simulation must return (state, energy_history, Dt)
-        state, energy_history, Dt = run_simulation(
+        state, energy_history, area_ratio_history, Dt = run_simulation(
             dt, T, state_type;
             save_path   = save_path,
             save_frames = save_frames,
@@ -96,15 +110,15 @@ function main(;
 
     @info "Simulation finished" steps=length(energy_history) final_energy=last(energy_history)
 
-    _visualize(state, energy_history, Dt, T, save_path)
+    _visualize(state, energy_history, area_ratio_history, Dt, T, save_path)
 
-    return state, energy_history, Dt
+    return state, energy_history, area_ratio_history, Dt
 end
 
 
 # ── Internal visualisation helpers (not intended for direct REPL use) ─────────
 
-function _visualize(state, energy_history, Dt::AbstractVector, T, save_path)
+function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, save_path)
     conf = set_para_base(Dt[end], T)
 
     # Phase field: sum over N vesicles so the plot works for any N >= 1
@@ -112,7 +126,7 @@ function _visualize(state, energy_history, Dt::AbstractVector, T, save_path)
 
     fig_phi = plot_field(
         phi_sum, conf;
-        title    = @sprintf("phi  (t = %.2e)", T),
+        #title    = @sprintf("phi  (t = %.2e)", T),
         filename = joinpath(save_path, "phi_final.png"),
     )
     display(fig_phi)
@@ -121,8 +135,16 @@ function _visualize(state, energy_history, Dt::AbstractVector, T, save_path)
         t_energy = Dt[2 : length(energy_history) + 1]
         fig_E = plot_vector(energy_history, collect(t_energy);
                             ylabel   = "Modified energy",
-                            title    = "SAV modified energy vs. time",
+                            title    = "Modified energy vs. time",
                             filename = joinpath(save_path, "energy_history.png"))
+        display(fig_E)
+    end
+    if length(area_history) > 1
+        t_area = Dt[2 : length(area_history) + 1]
+        fig_E = plot_vector(area_history, collect(t_area);
+                            ylabel   = "Surface Ratio",
+                            title    = "Surface Ratio vs. time",
+                            filename = joinpath(save_path, "area_history.png"))
         display(fig_E)
     end
 end
