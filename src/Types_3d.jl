@@ -179,8 +179,8 @@ mutable struct FieldState
     psi_hat :: Array{ComplexF64, 4}    # (Nx÷2+1) × Ny × Nz × N
 
     # --- Velocity field and its spectrum ---
-    u       :: Array{Float64, 4}     # Nx × Ny × Nz × 2
-    u_hat   :: Array{ComplexF64, 4}  # (Nx÷2+1) × Ny × Nz × 2
+    u       :: Array{Float64, 4}     # Nx × Ny × Nz × 3
+    u_hat   :: Array{ComplexF64, 4}  # (Nx÷2+1) × Ny × Nz × 3
 
     # --- Pressure field and its spectrum ---
     p       :: Array{Float64, 3}       # Nx × Ny × Nz
@@ -333,10 +333,10 @@ struct Operators{P, IP, PF, IPF}   # 新增 PF, IPF 两个类型参数
     buf_rhat1 :: Array{ComplexF64, 4}   # (Nk × Ny × Nz × N)  通用谱缓冲
     buf_rhat2 :: Array{ComplexF64, 4}
     # ── Step 4/5 速度场工作缓冲区（半谱，2分量）──
-    buf_uhat1 :: Array{ComplexF64, 4}   # (Nk × Ny × Nz × 2)
+    buf_uhat1 :: Array{ComplexF64, 4}   # (Nk × Ny × Nz × 3)
     buf_uhat2 :: Array{ComplexF64, 4}
     # ── Step 4/5 物理空间速度工作缓冲区 ──
-    buf_uphys1 :: Array{Float64, 4}     # (Nx × Ny × Nz × 2)
+    buf_uphys1 :: Array{Float64, 4}     # (Nx × Ny × Nz × 3)
     buf_uphys2 :: Array{Float64, 4}
     buf_deriv :: Array{Float64, 3}
     # ── 通用实空间 3D 工作缓冲区（标量，不带 N 维）──

@@ -171,7 +171,7 @@ function solve_step2(present::FieldState, old::FieldState,
     # LHS_2 = LHS_1 
     # LHS_2 = LHS_1 是浅拷贝（别名），不是独立矩阵，在Julia中，LHS_2 = LHS_1 让两者指向同一个数组。
     # 若后续有任何对 LHS_2 的修改（当前代码虽然没有，但这是隐患），将会意外修改 LHS_1。应改为：
-    LHS_2 = LHS_1
+    LHS_2 = copy(LHS_1)
     
     RHS_2 = zeros(3)
     RHS_2[1] = 0.5 * int_dot(H1_star, phi_21)
