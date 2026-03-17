@@ -1,34 +1,28 @@
+
 # 单个场的可视化函数
 function plot_field(field::Matrix{Float64}, cfg::Config;
-                   title::Union{String,Nothing} = nothing, # 默认设为 nothing
-                   colormap::Symbol = :RdBu,
+                   title::Union{String,Nothing} = nothing,
+                   colormap = :RdBu,
                    filename::Union{String,Nothing} = nothing)
-    
+
     fig = Figure(; size = (600, 500))
-    
-    # 逻辑优化：创建一个字典或者只在 title 不为 nothing 时传递该参数
     axis_kwargs = (xlabel = "x", ylabel = "y", aspect = DataAspect())
     if !isnothing(title)
         axis_kwargs = (title = title, axis_kwargs...)
     end
-    
     ax = Axis(fig[1, 1]; axis_kwargs...)
 
-    # Build physical coordinate axes
     x = range(0.0, cfg.Lx; length = cfg.Nx)
     y = range(0.0, cfg.Ly; length = cfg.Ny)
 
     hm = heatmap!(ax, x, y, field;
-                  colormap  = colormap,
-                  colorrange = (-1.0, 1.0))
+                  colormap    = colormap,
+                  interpolate = true,
+                  colorrange  = (-0.5, 0.5))
 
+    #Colorbar(fig[1, 2], hm)
     hidedecorations!(ax)
     hidespines!(ax)
-
-    # 如果没有标题且 hidedecorations，空间利用更紧凑
-    if isnothing(title)
-        colgap!(fig.layout, 0)
-    end
 
     isnothing(filename) || save(filename, fig)
     return fig
@@ -115,7 +109,7 @@ function plot_vector(ys         :: Union{Vector{Float64}, Vector{<:Vector{Float6
                      ylabel     :: String                       = "Value",
                      title      :: Union{String, Nothing}       = nothing,
                      filename   :: Union{String, Nothing}       = nothing,
-                     phase_switch :: Union{Float64, Nothing}    = 1e-6,
+                     phase_switch :: Union{Float64, Nothing}    = nothing,
                      labels     :: Union{Vector{String}, Nothing} = nothing)
 
     # 统一处理为多条曲线

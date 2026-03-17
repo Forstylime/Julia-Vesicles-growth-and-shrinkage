@@ -1,11 +1,11 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  Multiple_SAV  ·  scripts/Main.jl                           ║
+# ║  Multiple_SAV  ·  scripts/Main.jl                            ║
 # ║                                                              ║
 # ║  Workflow:                                                   ║
-# ║    1. First run: include("scripts/Main.jl") in Julia REPL   ║
-# ║    2. After editing any src/*.jl, Revise auto-reloads it;   ║
-# ║       just call main() again — no restart needed.           ║
-# ║    3. Simulation parameters can be changed freely in REPL.  ║
+# ║    1. First run: include("scripts/Main.jl") in Julia REPL    ║
+# ║    2. After editing any src/*.jl, Revise auto-reloads it;    ║
+# ║       just call main() again — no restart needed.            ║
+# ║    3. Simulation parameters can be changed freely in REPL.   ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 # ── 0. Revise must come first so it can track all subsequent includet calls ──
@@ -17,7 +17,7 @@ using LinearAlgebra
 using Printf
 using ProgressMeter
 using CairoMakie
-using Infiltrator          # debug aid; remove for production runs
+# using Infiltrator          # debug aid; remove for production runs
 
 FFTW.set_num_threads(1)  # 256×256 单线程已是最优
 BLAS.set_num_threads(4)  # BLAS 的矩阵运算可以多线程，但你的矩阵都很小（3×3），实际也没用
