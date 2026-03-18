@@ -120,15 +120,22 @@ end
 
 function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, save_path)
     conf = set_para_base(Dt[end], T)
-
+    ndim = ndims(state.phi)
     # Phase field: sum over N vesicles so the plot works for any N >= 1
-    phi_sum = dropdims(sum(state.phi, dims=3), dims=3) .+ conf.N .- 1
+    phi_sum = dropdims(sum(state.phi, dims=ndim), dims=ndim) .+ conf.N .- 1
 
-    fig_phi = plot_field(
-        phi_sum, conf;
-        #title    = @sprintf("phi  (t = %.2e)", T),
-        filename = joinpath(save_path, "phi_final.png"),
-    )
+    if ndim == 3
+        fig_phi = plot_field(
+            phi_sum, conf;
+            #title    = @sprintf("phi  (t = %.2e)", T),
+            filename = joinpath(save_path, "phi_final.png"),
+        )
+    elseif ndim == 4
+        fig_phi = plot_iso(phi_sum, conf;
+        filename = joinpath(save_path, "phi_final_3d.png"))
+    else
+        error("数据维度不匹配: size = $(size(state.phi))")
+    end
     display(fig_phi)
 
     if length(energy_history) > 1
