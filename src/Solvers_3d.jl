@@ -27,9 +27,7 @@ function solve_step1(present::FieldState, old::FieldState,
     L_psi   = conf.S4
     M_psi   = conf.M0_psi
     lhs_phi = @. (a / dt) + conf.M_phi * L_phi
-    lhs_psi = @. (a / dt) - conf.M0_psi * L_psi
-
-    a_dt = a / dt
+    lhs_psi = @. (a / dt) - conf.M0_psi * L_psi * ops.Laplacian
 
     # ── 分步求解：全部改为 .= 原地写入 ─────────────────────────────
 
@@ -192,7 +190,7 @@ end
 # File: src/Solvers.jl
 
 """
-Step 3: 根据求解出的 SAV 标量 R，线性组合分裂的场变量。
+Step 3: 根据求解出的 SAV 标量 R, 线性组合分裂的场变量。
 """
 # 签名从 Dict 改为 Step1Cache，字段访问从 [:key] 改为 .field
 function solve_step3(cache::Step1Cache, step2_res::NamedTuple)
