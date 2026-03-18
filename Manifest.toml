@@ -2,7 +2,7 @@
 
 julia_version = "1.12.5"
 manifest_format = "2.0"
-project_hash = "9aebbe97a45e452ade3954a6eb69b57c96ef24b4"
+project_hash = "07645b70f1517869e9c21ef9017d6dd3b7d81ee1"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -1076,6 +1076,11 @@ deps = ["ColorTypes", "FileIO", "GeometryBasics", "Printf"]
 git-tree-sha1 = "c009236e222df68e554c7ce5c720e4a33cc0c23f"
 uuid = "7269a6da-0436-5bbc-96c2-40638cbb6118"
 version = "0.5.3"
+
+[[deps.Meshing]]
+git-tree-sha1 = "5705d4f32545f7bcecdff75759a20d17812e5caf"
+uuid = "e6723b4c-ebff-59f1-b4b7-d97aa5274f73"
+version = "0.7.0"
 
 [[deps.MethodAnalysis]]
 deps = ["AbstractTrees"]

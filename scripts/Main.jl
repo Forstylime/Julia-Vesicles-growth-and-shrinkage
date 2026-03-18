@@ -27,7 +27,7 @@ BLAS.set_num_threads(4)  # BLAS 的矩阵运算可以多线程，但你的矩阵
 # Load order matters: dependencies before dependents.
 _SRC = joinpath(@__DIR__, "..", "src")
 _SCR = joinpath(@__DIR__, "..", "scripts")
-    
+
 
 #    joinpath(_SRC, "Types_3d.jl"),
 #    joinpath(_SRC, "SpectralUtils_3d.jl"),
@@ -86,11 +86,11 @@ state, E, Dt = main(dt=1e-6, T=1e-3, save_frames=500)
 ```
 """
 function main(;
-    dt          :: Float64 = 1e-6,
-    T           :: Float64 = 1e-4,
-    state_type  :: Int     = 1,
-    save_path   :: String  = joinpath(@__DIR__, "..", "results"),
-    save_frames :: Int     = 100,
+    dt::Float64=1e-6,
+    T::Float64=1e-4,
+    state_type::Int=1,
+    save_path::String=joinpath(@__DIR__, "..", "results"),
+    save_frames::Int=100,
 )
     mkpath(save_path)
     @info "Simulation started" dt T state_type save_path
@@ -100,15 +100,15 @@ function main(;
         # run_simulation must return (state, energy_history, Dt)
         state, energy_history, area_ratio_history, Dt = run_simulation(
             dt, T, state_type;
-            save_path   = save_path,
-            save_frames = save_frames,
+            save_path=save_path,
+            save_frames=save_frames,
         )
     catch e
-        @error "Simulation terminated with error" exception=(e, catch_backtrace())
+        @error "Simulation terminated with error" exception = (e, catch_backtrace())
         rethrow()
     end
 
-    @info "Simulation finished" steps=length(energy_history) final_energy=last(energy_history)
+    @info "Simulation finished" steps = length(energy_history) final_energy = last(energy_history)
 
     _visualize(state, energy_history, area_ratio_history, Dt, T, save_path)
 
@@ -128,30 +128,33 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
         fig_phi = plot_field(
             phi_sum, conf;
             #title    = @sprintf("phi  (t = %.2e)", T),
-            filename = joinpath(save_path, "phi_final.png"),
+            filename=joinpath(save_path, "phi_final.png"),
         )
-    elseif ndim == 4
-        fig_phi = plot_iso(phi_sum, conf;
-        filename = joinpath(save_path, "phi_final_3d.png"))
+        display(fig_phi)
+    elseif ndims(state.phi) == 4
+        fig_3d = plot_iso(phi_sum, conf;
+            isovalue=0.0,
+            alpha=0.8,
+            filename=joinpath(save_path, "phi_iso.png"))
+        display(fig_3d)
     else
         error("数据维度不匹配: size = $(size(state.phi))")
     end
-    display(fig_phi)
 
     if length(energy_history) > 1
-        t_energy = Dt[2 : length(energy_history) + 1]
+        t_energy = Dt[2:length(energy_history)+1]
         fig_E = plot_vector(energy_history, collect(t_energy);
-                            ylabel   = "Modified energy",
-                            title    = "Modified energy vs. time",
-                            filename = joinpath(save_path, "energy_history.png"))
+            ylabel="Modified energy",
+            title="Modified energy vs. time",
+            filename=joinpath(save_path, "energy_history.png"))
         display(fig_E)
     end
     if length(area_history) > 1
-        t_area = Dt[2 : length(area_history) + 1]
+        t_area = Dt[2:length(area_history)+1]
         fig_E = plot_vector(area_history, collect(t_area);
-                            ylabel   = "Surface Ratio",
-                            title    = "Surface Ratio vs. time",
-                            filename = joinpath(save_path, "area_history.png"))
+            ylabel="Surface Ratio",
+            title="Surface Ratio vs. time",
+            filename=joinpath(save_path, "area_history.png"))
         display(fig_E)
     end
 end

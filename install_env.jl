@@ -5,7 +5,7 @@ Pkg.activate(@__DIR__)
 
 # 2. 待安装的包列表
 dependencies = [
-    "FFTW", "IterativeSolvers", "LinearMaps",
+    "FFTW", "LinearMaps",
     "CairoMakie", "ProgressMeter",
     "StaticArrays", "StructArrays"
 ]
@@ -37,4 +37,4 @@ Pkg.precompile()
 
 @info "------------------------------------------------"
 @info "环境配置完成！现在你可以运行 Main.jl 了。"
-@info "提示：CairoMakie 首次绘图会有额外的 JIT 编译延迟，属正常现象。"
+@info "提示: CairoMakie 首次绘图会有额外的 JIT 编译延迟，属正常现象。"

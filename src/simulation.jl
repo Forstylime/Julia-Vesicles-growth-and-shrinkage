@@ -1,14 +1,14 @@
 ## simulation function
 function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
-                        save_path::String="./results",
-                        save_frames::Int=100)
+    save_path::String="./results",
+    save_frames::Int=100)
 
     # ── 1. 初始化配置与算子 ──────────────────────────────────────
     conf = set_para_base(dt_val, T_val)
-    ops  = build_operators(conf)
+    ops = build_operators(conf)
     mkpath(save_path)
 
-    t1 = range(0.0, 1e-6, step=1e-8)   # 第一段
+    t1 = range(0.0, 1e-6, step=1e-7)   # 第一段
     t2 = range(1e-6, T_val, step=conf.dt)    # 第二段
     # 拼接：注意使用 vcat，为了避免重叠点，通常拼接时剔除后续段的起始点
     Dt = vcat(t1, t2[2:end])
@@ -25,8 +25,11 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     elseif ndims(present.phi) == 4
         phi_plot = sum(present.phi, dims=4) .+ conf.N .- 1
         phi_plot = dropdims(phi_plot, dims=4)
-        fig_phi = plot_iso(phi_plot, conf)
-    else 
+        fig_phi = plot_iso(phi_plot, conf;
+            isovalue=0.0,
+            alpha=0.6,
+            filename=joinpath(save_path, "phi_iso.png"))
+    else
         error("Size of field (phi, psi, ...) = $(size(present.phi)) not correct!")
     end
     display(fig_phi)
@@ -39,7 +42,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     present.R1 = sqrt(get_W1(present.phi, ops, conf, A_0) + conf.C1)
     present.R2 = sqrt(get_W2(present.phi, ops, conf) + conf.C2)
     present.R3 = sqrt(get_W3(present.phi, present.psi, conf) + conf.C3)
-    present.Q  = 1.0
+    present.Q = 1.0
 
     # 计算初始化学势
     L_phi = @. conf.S1 * ops.Biharmonic - conf.S2 * ops.Laplacian + conf.S3
@@ -47,30 +50,30 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     H1 = get_H1(present.phi, ops, conf, A_0)
     H2 = get_H2(present.phi, ops, conf)
     H3 = get_H3(present.phi, present.psi, conf)
-    G  = get_MG(present.phi, present.psi, conf)
+    G = get_MG(present.phi, present.psi, conf)
 
-    present.mu_hat .= L_phi          .* present.phi_hat .+
-                      present.R1     .* (ops.fft_plan * H1) .+
-                      present.R2     .* (ops.fft_plan * H2) .+
-                      present.R3     .* (ops.fft_plan * H3)
-    present.nu_hat .= conf.S4        .* present.psi_hat .+
-                      present.R3     .* (ops.fft_plan * G)
+    present.mu_hat .= L_phi .* present.phi_hat .+
+                      present.R1 .* (ops.fft_plan * H1) .+
+                      present.R2 .* (ops.fft_plan * H2) .+
+                      present.R3 .* (ops.fft_plan * H3)
+    present.nu_hat .= conf.S4 .* present.psi_hat .+
+                      present.R3 .* (ops.fft_plan * G)
 
     present.mu .= ops.ifft_plan * present.mu_hat
     present.nu .= ops.ifft_plan * present.nu_hat
-    
+
     # BDF2 需要两个时间层，初始令 old = present
     old = deepcopy(present)
     step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.Nz, conf.N)
 
     # ── 3. 监控变量 ──────────────────────────────────────────────
-    energy_history     = Float64[]
+    energy_history = Float64[]
     area_ratio_history = Float64[]
 
     @info "仿真开始。初始面积 = $(present.A0), 总步数 = $(Nt-1)"
 
     # ── 4. 时间推进循环 ──────────────────────────────────────────
-    p_meter = Progress(Nt-1, 1, "Computing...")
+    p_meter = Progress(Nt - 1, 1, "Computing...")
 
     for n in 1:Nt-1
 
@@ -94,10 +97,10 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         # 谱空间
         present.phi_hat .= step6_res.phi_hat
         present.psi_hat .= step6_res.psi_hat
-        present.mu_hat  .= step6_res.mu_hat
-        present.nu_hat  .= step6_res.nu_hat
-        present.u_hat   .= step7_res.u_hat
-        present.p_hat   .= step7_res.p_hat
+        present.mu_hat .= step6_res.mu_hat
+        present.nu_hat .= step6_res.nu_hat
+        present.u_hat .= step7_res.u_hat
+        present.p_hat .= step7_res.p_hat
 
         # 实空间（用 view 避免切片分配）
         to_physical!(present.phi, present.phi_hat, ops)
@@ -111,7 +114,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         present.R1 = step6_res.R1
         present.R2 = step6_res.R2
         present.R3 = step6_res.R3
-        present.Q  = step5_res
+        present.Q = step5_res
 
         # ── 监控 ──
         push!(energy_history, compute_modified_energy(present, old, ops, conf))
