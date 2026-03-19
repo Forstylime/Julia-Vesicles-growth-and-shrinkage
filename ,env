@@ -1,4 +1,0 @@
-# 设置线程数，自动检测
-JULIA_NUM_THREADS=auto
-# 设置FFTW线程数，固定为8
-FFTW_NUM_THREADS=8

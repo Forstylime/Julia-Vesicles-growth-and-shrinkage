@@ -18,6 +18,7 @@ using Printf
 using ProgressMeter
 using CairoMakie
 using GLMakie
+using MAT
 # using Infiltrator          # debug aid; remove for production runs
 
 FFTW.set_num_threads(1)  # 256×256 单线程已是最优
@@ -124,6 +125,10 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
     # Phase field: sum over N vesicles so the plot works for any N >= 1
     phi_sum = dropdims(sum(state.phi, dims=ndim), dims=ndim) .+ conf.N .- 1
 
+    # Ensure MAT directory exists
+    mat_folder = joinpath(@__DIR__, "..", "MAT")
+    mkpath(mat_folder)
+
     if ndim == 3
         fig_phi = plot_field(
             phi_sum, conf;
@@ -131,12 +136,10 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
             filename=joinpath(save_path, "phi_final.png"),
         )
         display(fig_phi)
-    elseif ndims(state.phi) == 4
-        fig_3d = plot_iso(phi_sum, conf;
-            isovalue=0.0,
-            alpha=0.8,
-            filename=joinpath(save_path, "phi_iso.png"))
-        display(fig_3d)
+        matwrite(joinpath(mat_folder, "phi_2d.mat"), Dict("phi" => phi_sum))
+    elseif ndim == 4
+        # 去掉画图，只使用MAT.jl保存数据
+        matwrite(joinpath(mat_folder, "phi_3d.mat"), Dict("phi" => phi_sum))
     else
         error("数据维度不匹配: size = $(size(state.phi))")
     end

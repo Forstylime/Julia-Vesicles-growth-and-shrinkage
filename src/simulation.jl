@@ -8,7 +8,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     ops = build_operators(conf)
     mkpath(save_path)
 
-    t1 = range(0.0, 1e-6, step=1e-7)   # 第一段
+    t1 = range(0.0, 1e-6, step=1e-8)   # 第一段
     t2 = range(1e-6, T_val, step=conf.dt)    # 第二段
     # 拼接：注意使用 vcat，为了避免重叠点，通常拼接时剔除后续段的起始点
     Dt = vcat(t1, t2[2:end])
