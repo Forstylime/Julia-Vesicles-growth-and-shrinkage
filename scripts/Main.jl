@@ -43,11 +43,11 @@ _SCR = joinpath(@__DIR__, "..", "scripts")
 #    joinpath(_SRC, "Solvers.jl"),
 
 for file in (
-    joinpath(_SRC, "Types_3d.jl"),
-    joinpath(_SRC, "SpectralUtils_3d.jl"),
-    joinpath(_SRC, "Utils_3d.jl"),
-    joinpath(_SRC, "Init_3d.jl"),
-    joinpath(_SRC, "Solvers_3d.jl"),
+    joinpath(_SRC, "Types.jl"),
+    joinpath(_SRC, "SpectralUtils.jl"),
+    joinpath(_SRC, "Utils.jl"),
+    joinpath(_SRC, "Init.jl"),
+    joinpath(_SRC, "Solvers.jl"),
     joinpath(_SRC, "simulation.jl"),
     joinpath(_SCR, "visualize.jl"),
 )
@@ -132,10 +132,9 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
     if ndim == 3
         fig_phi = plot_field(
             phi_sum, conf;
-            #title    = @sprintf("phi  (t = %.2e)", T),
-            filename=joinpath(save_path, "phi_final.png"),
+            title    = @sprintf("phi  (t = %.2e)", T),
+            filename=joinpath(save_path, "phi_final.png")
         )
-        display(fig_phi)
         matwrite(joinpath(mat_folder, "phi_2d.mat"), Dict("phi" => phi_sum))
     elseif ndim == 4
         # 去掉画图，只使用MAT.jl保存数据
@@ -150,7 +149,6 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
             ylabel="Modified energy",
             title="Modified energy vs. time",
             filename=joinpath(save_path, "energy_history.png"))
-        display(fig_E)
     end
     if length(area_history) > 1
         t_area = Dt[2:length(area_history)+1]
@@ -158,7 +156,6 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
             ylabel="Surface Ratio",
             title="Surface Ratio vs. time",
             filename=joinpath(save_path, "area_history.png"))
-        display(fig_E)
     end
 end
 

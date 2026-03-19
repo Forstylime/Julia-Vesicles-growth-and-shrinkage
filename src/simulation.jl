@@ -17,22 +17,24 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     # ── 2. 生成初始场 ────────────────────────────────────────────
     present = generate_initial_condition(conf, ops, state_type)
 
+    # Ensure MAT directory exists
+    mat_folder = joinpath(@__DIR__, "..", "MAT")
+    mkpath(mat_folder)
     # 初始场可视化检查
     if ndims(present.phi) == 3
         phi_plot = sum(present.phi, dims=3) .+ conf.N .- 1
         phi_plot = dropdims(phi_plot, dims=3)
-        fig_phi = plot_field(phi_plot, conf)
+        fig_phi = plot_field(phi_plot, conf, 
+            filename=joinpath(save_path, "phi_0.png"))
+        display(fig_phi)
+        matwrite(joinpath(mat_folder, "phi_2d.mat"), Dict("phi" => phi_plot))
     elseif ndims(present.phi) == 4
         phi_plot = sum(present.phi, dims=4) .+ conf.N .- 1
         phi_plot = dropdims(phi_plot, dims=4)
-        fig_phi = plot_iso(phi_plot, conf;
-            isovalue=0.0,
-            alpha=0.6,
-            filename=joinpath(save_path, "phi_iso.png"))
+        matwrite(joinpath(mat_folder, "phi_3d.mat"), Dict("phi" => phi_plot))
     else
         error("Size of field (phi, psi, ...) = $(size(present.phi)) not correct!")
     end
-    display(fig_phi)
 
     # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
     A_0 = calculate_area(present.phi, ops, conf)
@@ -64,8 +66,13 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
     # BDF2 需要两个时间层，初始令 old = present
     old = deepcopy(present)
-    step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.Nz, conf.N)
-
+    if ndims(present.phi) == 3
+        step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.N)
+    elseif ndims(present.phi) == 4
+        step1_cache = Step1Cache(conf.Nx, conf.Ny, conf.Nz, conf.N)
+    else
+        error("数据维度错误, size = $(size(presnet.phi))")
+    end
     # ── 3. 监控变量 ──────────────────────────────────────────────
     energy_history = Float64[]
     area_ratio_history = Float64[]
