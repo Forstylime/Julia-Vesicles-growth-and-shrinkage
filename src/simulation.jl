@@ -67,6 +67,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
     # ── 4. 时间推进循环 ──────────────────────────────────────────
     p_meter = Progress(Nt - 1, 1, "Computing...")
 
+    last_save_idx = -1 # 初始化保存索引，确保从 t=0 开始检查
     for n in 1:Nt-1
 
         present.dt = Dt[n+1] - Dt[n]
@@ -109,8 +110,8 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         present.Q = step5_res
 
         # 保存中间时刻结果
-
-        if mod(Dt[n], save_interval) == 0
+        curr_save_idx = floor(Int, (Dt[n] + 1e-12) / save_interval)
+        if curr_save_idx > last_save_idx
             t_str = @sprintf("%.2e", Dt[n])
 
             # 准备要保存的状态数据字典
@@ -138,6 +139,7 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
             else
                 error("Size of field (phi, psi, ...) = $(size(present.phi)) not correct!")
             end
+            last_save_idx = curr_save_idx
         end
 
         # ── 监控 ──
