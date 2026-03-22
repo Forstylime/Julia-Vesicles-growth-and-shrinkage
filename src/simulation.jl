@@ -1,7 +1,11 @@
 ## simulation function
 function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
-    save_path::String="./results",
-    save_frames::Int=100)
+    save_path::String="./results", #默认保存结果到"./results"文件夹
+    save_interval::Float64=0.001)
+
+    # Ensure MAT directory exists
+    mat_folder = joinpath(@__DIR__, "..", "MAT\\case3")
+    mkpath(mat_folder)
 
     # ── 1. 初始化配置与算子 ──────────────────────────────────────
     conf = set_para_base(dt_val, T_val)
@@ -16,25 +20,6 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
 
     # ── 2. 生成初始场 ────────────────────────────────────────────
     present = generate_initial_condition(conf, ops, state_type)
-
-    # Ensure MAT directory exists
-    mat_folder = joinpath(@__DIR__, "..", "MAT")
-    mkpath(mat_folder)
-    # 初始场可视化检查
-    if ndims(present.phi) == 3
-        phi_plot = sum(present.phi, dims=3) .+ conf.N .- 1
-        phi_plot = dropdims(phi_plot, dims=3)
-        fig_phi = plot_field(phi_plot, conf, 
-            filename=joinpath(save_path, "phi_0.png"))
-        display(fig_phi)
-        matwrite(joinpath(mat_folder, "phi_2d.mat"), Dict("phi" => phi_plot))
-    elseif ndims(present.phi) == 4
-        phi_plot = sum(present.phi, dims=4) .+ conf.N .- 1
-        phi_plot = dropdims(phi_plot, dims=4)
-        matwrite(joinpath(mat_folder, "phi_3d.mat"), Dict("phi" => phi_plot))
-    else
-        error("Size of field (phi, psi, ...) = $(size(present.phi)) not correct!")
-    end
 
     # 用 f_surf 积分计算每个囊泡的真实面积（与模型约定一致)
     A_0 = calculate_area(present.phi, ops, conf)
@@ -122,6 +107,38 @@ function run_simulation(dt_val::Float64, T_val::Float64, state_type::Int;
         present.R2 = step6_res.R2
         present.R3 = step6_res.R3
         present.Q = step5_res
+
+        # 保存中间时刻结果
+
+        if mod(Dt[n], save_interval) == 0
+            t_str = @sprintf("%.2e", Dt[n])
+
+            # 准备要保存的状态数据字典
+            state_to_save = Dict(
+                "phi" => present.phi,
+                "psi" => present.psi,
+                "mu" => present.mu,
+                "nu" => present.nu,
+                "p" => present.p,
+                "u" => present.u,
+                "R1" => present.R1,
+                "R2" => present.R2,
+                "R3" => present.R3,
+                "Q" => present.Q
+            )
+
+            if ndims(present.phi) == 3
+                phi_plot = dropdims(sum(present.phi, dims=3), dims=3) .+ conf.N .- 1
+                plot_field(phi_plot, conf,
+                    title=@sprintf("phi  (t = %.2e)", Dt[n]),
+                    filename=joinpath(save_path, "phi_t$(t_str).png"))
+                matwrite(joinpath(mat_folder, "state_2d_t$(t_str).mat"), state_to_save)
+            elseif ndims(present.phi) == 4
+                matwrite(joinpath(mat_folder, "state_3d_t$(t_str).mat"), state_to_save)
+            else
+                error("Size of field (phi, psi, ...) = $(size(present.phi)) not correct!")
+            end
+        end
 
         # ── 监控 ──
         push!(energy_history, compute_modified_energy(present, old, ops, conf))

@@ -7,25 +7,33 @@ using FFTW
 """
 function set_para_base(dt::Float64, T::Float64)
     N = 1   # single phase field for now
-    Nx, Ny   = 256, 256
-    Lx, Ly   = 1.0*N, 1.0
-    epsilon  = 0.01
+    Nx, Ny = 256, 256
+    Lx, Ly = 1.0 * N, 1.0
+    epsilon = 0.01
     gamma_bend = 0.1
     gamma_in, gamma_out = 1e5, 1e5
-    goal =:g
+    goal = :s
 
     if N == 1
-        if goal ===:s
-        psi_in_v  = [0.1]
-        else 
-            psi_in_v  = [0.65]
+        if goal === :g
+            psi_in_v = [0.65]
+        elseif goal === :s
+            psi_in_v = [0.1]
+        else
+            error("what's the goal? now it is $goal")
         end
         psi_out_v = [0.8]
     elseif N == 2
-        psi_in_v  = [0.65, 0.65]
+        if goal === :g
+            psi_in_v = [0.65, 0.65]
+        elseif goal === :s
+            psi_in_v = [0.1, 0.1]
+        else
+            error("what's the goal? now it is $goal")
+        end
         psi_out_v = [0.8, 0.8]
     elseif N == 3
-        psi_in_v  = [0.1, 0.65, 0.5]
+        psi_in_v = [0.1, 0.65, 0.5]
         psi_out_v = [0.8, 0.6, 0.4]
     end
 
@@ -36,39 +44,39 @@ function set_para_base(dt::Float64, T::Float64)
 
     # 使用 keyword 构造函数，Nt/dx/dy 自动计算
     return Config(
-        N = N,
-        epsilon     = epsilon,
-        M_phi       = 1.0,
-        M0_psi      = 0.5,
-        eta         = 1.0,
-        gamma_surf  = 1.0,
-        gamma_area  = 5e4,
-        gamma_bend  = gamma_bend,
-        gamma_in    = gamma_in,
-        beta_in     = 0.0,
-        psi_in_v    = psi_in_v,
-        gamma_out   = gamma_out,
-        beta_out    = 0.0,
-        psi_out_v   = psi_out_v,
-        lamda       = 1.0,
-        S1 = S1, S2 = S2, S3 = S3, S4 = S4,
-        C1 = 1.0, C2 = 5.0e5, C3 = 1.0e6,
-        dt = dt, T = T,
-        Nx = Nx, Ny = Ny, Lx = Lx, Ly = Ly,
-        tol  = 1e-12,
-        goal = goal
-)
+        N=N,
+        epsilon=epsilon,
+        M_phi=1.0,
+        M0_psi=0.5,
+        eta=1.0,
+        gamma_surf=1.0,
+        gamma_area=5e4,
+        gamma_bend=gamma_bend,
+        gamma_in=gamma_in,
+        beta_in=0.0,
+        psi_in_v=psi_in_v,
+        gamma_out=gamma_out,
+        beta_out=0.0,
+        psi_out_v=psi_out_v,
+        lamda=1.0,
+        S1=S1, S2=S2, S3=S3, S4=S4,
+        C1=1.0, C2=5.0e5, C3=1.0e6,
+        dt=dt, T=T,
+        Nx=Nx, Ny=Ny, Lx=Lx, Ly=Ly,
+        tol=1e-12,
+        goal=goal
+    )
 end
 
 """
 生成初始物理场
 """
 function generate_initial_condition(conf::Config, ops::Operators, state_type::Int)
-    Nx, Ny   = conf.Nx, conf.Ny
-    dx, dy   = conf.dx, conf.dy
-    Lx, Ly   = conf.Lx, conf.Ly
-    epsilon  = conf.epsilon
-    N        = conf.N
+    Nx, Ny = conf.Nx, conf.Ny
+    dx, dy = conf.dx, conf.dy
+    Lx, Ly = conf.Lx, conf.Ly
+    epsilon = conf.epsilon
+    N = conf.N
 
     x_nodes = range(0, Lx - dx, length=Nx)
     y_nodes = range(0, Ly - dy, length=Ny)
@@ -81,7 +89,13 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         cx = [Lx / 2]
         cy = [Ly / 2]
     elseif N == 2
-        cx = [0.73 1.27]
+        if conf.goal === :g
+            cx = [0.75 1.25]
+        elseif conf.goal === :s
+            cx = [0.65 1.35]
+        else
+            error("what's the goal? now it is $(conf.goal)")
+        end
         cy = [Ly / 2, Ly / 2]
     elseif N == 3
         cx = [Lx / 4, Lx / 2, 3Lx / 4]
@@ -94,24 +108,24 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         end
         cx_n, cy_n = cx, cy
         if state_type == 1  # 单个椭圆
-            R      = 0.2 * Lx
-            dist   = @. sqrt((X - cx_n)^2 / 2 + (Y - cy_n)^2)
+            R = 0.2 * Lx
+            dist = @. sqrt((X - cx_n)^2 / 2 + (Y - cy_n)^2)
             phi[:, :, 1] .= @. tanh((R - dist) / (sqrt(2) * epsilon))
 
         elseif state_type == 2  # 三角形
-            Xc, Yc    = X .- cx_n, Y .- cy_n
-            radius    = 0.65 * Lx
+            Xc, Yc = X .- cx_n, Y .- cy_n
+            radius = 0.65 * Lx
             smoothness = 40.0
             k_sin, k_cos = sqrt(3) / 2, 0.5
             d1 = @. -Yc
             d2 = @. k_sin * Xc + k_cos * Yc
             d3 = @. -k_sin * Xc + k_cos * Yc
-            mx       = @. max(d1, max(d2, d3))
-            d_shape  = @. mx + (1 / smoothness) * log(
-                        exp(smoothness * (d1 - mx)) +
-                        exp(smoothness * (d2 - mx)) +
-                        exp(smoothness * (d3 - mx)))
-            d_final  = @. d_shape - (radius / 3)
+            mx = @. max(d1, max(d2, d3))
+            d_shape = @. mx + (1 / smoothness) * log(
+                exp(smoothness * (d1 - mx)) +
+                exp(smoothness * (d2 - mx)) +
+                exp(smoothness * (d3 - mx)))
+            d_final = @. d_shape - (radius / 3)
             phi[:, :, 1] .= @. -tanh(d_final / (sqrt(2) * epsilon))
         elseif state_type == 3  # star-shape
             if conf.goal === :s
@@ -129,7 +143,7 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         elseif state_type == 4  # 随机扰动形状（random blob）
             R0, amplitude = conf.goal === :s ? (0.3, 0.15) : (0.2, 0.25)
 
-            r     = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
+            r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
             theta = @. atan(X - cx_n, Y - cy_n)
 
             R_theta = fill(R0, size(theta))
@@ -148,11 +162,22 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
         for n in 1:N
             cx_n, cy_n = cx[n], cy[n]
             if state_type == 7 # 两个star-shape
-                if conf.goal ===:s
+                if conf.goal === :s
                     error("对state_type=$state_type,conf.goal应该是g")
                 end
                 R0 = 0.2
                 amplitude = 0.02
+                k = 10
+                r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
+                theta = @. atan(X - cx_n, Y - cy_n)
+                R_theta = @. R0 + amplitude * cos(k * theta)
+                phi[:, :, n] .= @. tanh((R_theta - r) / (sqrt(2) * epsilon))
+            elseif state_type == 8
+                if conf.goal === :g
+                    error("对state_type=$state_type,conf.goal应该是s")
+                end
+                R0 = 0.3
+                amplitude = 0.01
                 k = 10
                 r = @. sqrt((X - cx_n)^2 + (Y - cy_n)^2)
                 theta = @. atan(X - cx_n, Y - cy_n)
@@ -174,12 +199,14 @@ function generate_initial_condition(conf::Config, ops::Operators, state_type::In
     # FFT —— 注意 u 沿前两维变换，第3维是方向分量
     phi_hat = ops.fft_plan * phi
     psi_hat = ops.fft_plan * psi
-    u       = zeros(Nx, Ny, 2)
-    u_hat   = ops.fft_plan_2 * u
-    p       = zeros(Nx, Ny)
-    p_hat   = ops.fft_plan_1 * p
-    mu      = zeros(Nx, Ny, N);  mu_hat = ops.fft_plan * mu
-    nu      = zeros(Nx, Ny, N);  nu_hat = ops.fft_plan * nu
+    u = zeros(Nx, Ny, 2)
+    u_hat = ops.fft_plan_2 * u
+    p = zeros(Nx, Ny)
+    p_hat = ops.fft_plan_1 * p
+    mu = zeros(Nx, Ny, N)
+    mu_hat = ops.fft_plan * mu
+    nu = zeros(Nx, Ny, N)
+    nu_hat = ops.fft_plan * nu
 
     return FieldState(
         phi, phi_hat, psi, psi_hat,

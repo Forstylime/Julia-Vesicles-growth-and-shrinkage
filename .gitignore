@@ -14,6 +14,11 @@ compiled/
 *.csv
 *.log
 
+# 忽略 MAT 文件夹及其内容
+/MAT/
+# 忽略可能生成的各种图表、CSV 数据或日志
+*.mat
+
 # --- 开发环境与 IDE ---
 # 忽略 VS Code 配置
 .vscode/

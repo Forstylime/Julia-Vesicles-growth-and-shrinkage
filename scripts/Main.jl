@@ -21,9 +21,6 @@ using GLMakie
 using MAT
 # using Infiltrator          # debug aid; remove for production runs
 
-FFTW.set_num_threads(1)  # 256×256 单线程已是最优
-BLAS.set_num_threads(4)  # BLAS 的矩阵运算可以多线程，但你的矩阵都很小（3×3），实际也没用
-
 # ── 2. Project source files (includet = include + Revise tracking) ───────────
 # Load order matters: dependencies before dependents.
 _SRC = joinpath(@__DIR__, "..", "src")
@@ -76,33 +73,33 @@ end
 # ══════════════════════════════════════════════════════════════════════════════
 
 """
-    main(; dt, T, state_type, save_path, save_frames) -> (state, energy_history, Dt)
+    main(; dt, T, state_type, save_path, save_frames) -> (state, energy_history, area_ratio_history, Dt)
 
 Simulation entry point. All arguments have defaults; override as needed:
 
 ```julia
-state, E, Dt = main()                                    # defaults
-state, E, Dt = main(dt=1e-5, T=1e-3, state_type=7)
-state, E, Dt = main(dt=1e-6, T=1e-3, save_frames=500)
+state, E, A, Dt = main()                                    # defaults
+state, E, A, Dt = main(dt=1e-5, T=1e-3, state_type=1)
+state, E, A, Dt = main(dt=1e-6, T=1e-3, save_interval=0.001)
 ```
 """
 function main(;
     dt::Float64=1e-6,
     T::Float64=1e-4,
     state_type::Int=1,
-    save_path::String=joinpath(@__DIR__, "..", "results"),
-    save_frames::Int=100,
+    save_path::String=joinpath(@__DIR__, "..", "results\\case3"),
+    save_interval::Float64=0.001,
 )
     mkpath(save_path)
     @info "Simulation started" dt T state_type save_path
 
     local state, energy_history, area_ratio_history, Dt
     try
-        # run_simulation must return (state, energy_history, Dt)
+        # run_simulation must return (state, energy_history, area_ratio_history, Dt)
         state, energy_history, area_ratio_history, Dt = run_simulation(
             dt, T, state_type;
             save_path=save_path,
-            save_frames=save_frames,
+            save_interval=save_interval,
         )
     catch e
         @error "Simulation terminated with error" exception = (e, catch_backtrace())
@@ -126,19 +123,33 @@ function _visualize(state, energy_history, area_history, Dt::AbstractVector, T, 
     phi_sum = dropdims(sum(state.phi, dims=ndim), dims=ndim) .+ conf.N .- 1
 
     # Ensure MAT directory exists
-    mat_folder = joinpath(@__DIR__, "..", "MAT")
+    mat_folder = joinpath(@__DIR__, "..", "MAT/case3")
     mkpath(mat_folder)
 
+    # 准备要保存的状态数据字典
+    state_to_save = Dict(
+        "phi" => state.phi,
+        "psi" => state.psi,
+        "mu" => state.mu,
+        "nu" => state.nu,
+        "p" => state.p,
+        "u" => state.u,
+        "R1" => state.R1,
+        "R2" => state.R2,
+        "R3" => state.R3,
+        "Q" => state.Q
+    )
+
     if ndim == 3
-        fig_phi = plot_field(
+        plot_field(
             phi_sum, conf;
-            title    = @sprintf("phi  (t = %.2e)", T),
+            title=@sprintf("phi  (t = %.2e)", T),
             filename=joinpath(save_path, "phi_final.png")
         )
-        matwrite(joinpath(mat_folder, "phi_2d.mat"), Dict("phi" => phi_sum))
+        matwrite(joinpath(mat_folder, "state_2d_final.mat"), state_to_save)
     elseif ndim == 4
         # 去掉画图，只使用MAT.jl保存数据
-        matwrite(joinpath(mat_folder, "phi_3d.mat"), Dict("phi" => phi_sum))
+        matwrite(joinpath(mat_folder, "state_3d_final.mat"), state_to_save)
     else
         error("数据维度不匹配: size = $(size(state.phi))")
     end
